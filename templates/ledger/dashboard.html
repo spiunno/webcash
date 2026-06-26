@@ -1,0 +1,81 @@
+{% extends 'ledger/base.html' %}
+{% block title %}Dashboard — WebCash{% endblock %}
+{% block breadcrumb %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="label">Net Worth</div>
+    <div class="value {% if net_worth >= 0 %}positive{% else %}negative{% endif %}">
+      {{ net_worth|floatformat:2 }}
+    </div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Total Assets</div>
+    <div class="value positive">{{ assets|floatformat:2 }}</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Total Liabilities</div>
+    <div class="value {% if liabilities > 0 %}negative{% else %}neutral{% endif %}">
+      {{ liabilities|floatformat:2 }}
+    </div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Income</div>
+    <div class="value positive">{{ income|floatformat:2 }}</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Expenses</div>
+    <div class="value {% if expenses > 0 %}negative{% else %}neutral{% endif %}">
+      {{ expenses|floatformat:2 }}
+    </div>
+  </div>
+  <div class="summary-card">
+    <div class="label">Net Income</div>
+    {% with net_income=income|add:expenses %}
+    <div class="value {% if income > expenses %}positive{% else %}negative{% endif %}">
+      {% widthratio income 1 1 as i_val %}
+      {{ income|floatformat:2 }}
+    </div>
+    {% endwith %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Recent Transactions</div>
+  {% if recent_txns %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Description</th>
+        <th>Accounts</th>
+        <th class="amount">Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for txn in recent_txns %}
+      <tr>
+        <td>{{ txn.post_date }}</td>
+        <td>{{ txn.description|default:"—" }}</td>
+        <td style="font-size:.8rem;color:#7f8fa4">
+          {% for s in txn.splits.all %}
+            <a href="{% url 'account_register' s.account.id %}" style="color:inherit;text-decoration:none;">
+              {{ s.account.name }}
+            </a>{% if not forloop.last %}, {% endif %}
+          {% endfor %}
+        </td>
+        <td class="amount">
+          {% for s in txn.splits.all %}
+            {% if s.value_num > 0 %}{{ s.value_num|floatformat:2 }}{% endif %}
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:#7f8fa4;font-size:.9rem;">No transactions yet. <a href="{% url 'import_gnucash' %}">Import a GnuCash file</a> to get started.</p>
+  {% endif %}
+</div>
+{% endblock %}

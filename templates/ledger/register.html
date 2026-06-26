@@ -1,0 +1,69 @@
+{% extends 'ledger/base.html' %}
+{% block title %}{{ account.name }} — WebCash{% endblock %}
+{% block breadcrumb %}
+  <a href="{% url 'dashboard' %}" style="color:inherit;text-decoration:none;">Dashboard</a>
+  &rsaquo; {{ account.full_path }}
+{% endblock %}
+
+{% block content %}
+<div class="card" style="margin-bottom:16px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div>
+      <div style="font-size:1.1rem;font-weight:700;">{{ account.name }}</div>
+      <div style="font-size:.8rem;color:#7f8fa4;margin-top:3px;">
+        {{ account.get_account_type_display }} &middot; {{ account.commodity_mnemonic }}
+        {% if account.description %} &middot; {{ account.description }}{% endif %}
+      </div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:.75rem;color:#7f8fa4;text-transform:uppercase;letter-spacing:.05em;">Balance</div>
+      <div style="font-size:1.5rem;font-weight:700;
+        color:{% if account.balance >= 0 %}#3cb66e{% else %}#e05252{% endif %}">
+        {{ account.balance|floatformat:2 }}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Transaction Register</div>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Description</th>
+        <th>Transfer</th>
+        <th>Memo</th>
+        <th class="amount">Debit</th>
+        <th class="amount">Credit</th>
+        <th class="amount">Balance</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      {% with s=row.split txn=row.txn %}
+      <tr>
+        <td style="white-space:nowrap">{{ txn.post_date }}</td>
+        <td>{{ txn.description|default:"—" }}</td>
+        <td style="font-size:.82rem;color:#7f8fa4">{{ row.other_label }}</td>
+        <td style="font-size:.82rem;color:#7f8fa4">{{ s.memo|default:"" }}</td>
+        <td class="amount {% if s.value_num > 0 %}positive{% endif %}">
+          {% if s.value_num > 0 %}{{ s.value_num|floatformat:2 }}{% endif %}
+        </td>
+        <td class="amount {% if s.value_num < 0 %}negative{% endif %}">
+          {% if s.value_num < 0 %}{{ s.value_num|floatformat:2 }}{% endif %}
+        </td>
+        <td class="amount {% if row.running >= 0 %}positive{% else %}negative{% endif %}">
+          {{ row.running|floatformat:2 }}
+        </td>
+      </tr>
+      {% endwith %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p style="color:#7f8fa4;font-size:.9rem;">No transactions in this account.</p>
+  {% endif %}
+</div>
+{% endblock %}
