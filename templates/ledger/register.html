@@ -1,4 +1,5 @@
 {% extends 'ledger/base.html' %}
+{% load ledger_tags %}
 {% block title %}{{ account.name }} — WebCash{% endblock %}
 {% block breadcrumb %}
   <a href="{% url 'dashboard' %}" style="color:inherit;text-decoration:none;">Dashboard</a>
@@ -15,55 +16,515 @@
         {% if account.description %} &middot; {{ account.description }}{% endif %}
       </div>
     </div>
-    <div style="text-align:right;">
-      <div style="font-size:.75rem;color:#7f8fa4;text-transform:uppercase;letter-spacing:.05em;">Balance</div>
-      <div style="font-size:1.5rem;font-weight:700;
-        color:{% if account.balance >= 0 %}#3cb66e{% else %}#e05252{% endif %}">
-        {{ account.balance|floatformat:2 }}
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div style="text-align:right;">
+        <div style="font-size:.75rem;color:#7f8fa4;text-transform:uppercase;letter-spacing:.05em;">Balance</div>
+        <div style="font-size:1.5rem;font-weight:700;
+          color:{% if account.balance >= 0 %}var(--success){% else %}var(--danger){% endif %}">
+          {{ account.balance|amt:prefs }}
+        </div>
       </div>
+      <button id="new-txn-btn" class="btn btn-primary"
+              style="white-space:nowrap;"
+              data-url="{% url 'transaction_new' account.id %}?partial=1">
+        + New Transaction
+      </button>
     </div>
   </div>
 </div>
 
-<div class="card">
-  <div class="card-title">Transaction Register</div>
+{# New transaction panel #}
+<div id="new-txn-panel" class="card" style="display:none;padding:0;overflow:visible;margin-bottom:8px;"></div>
+
+<div class="card" style="padding:0;overflow:hidden;">
   {% if rows %}
-  <table>
+
+  {# ── Toolbar ── #}
+  <div class="reg-toolbar">
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button id="reg-filter-btn" class="reg-tool-btn" title="Toggle filters">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:-1px;">
+          <path d="M1 2h14l-5 6v5l-4-2V8z"/>
+        </svg>
+        Filter
+      </button>
+      <div style="position:relative;">
+        <button id="reg-cols-btn" class="reg-tool-btn" title="Show/hide columns">
+          ⚙ Columns
+        </button>
+        <div id="reg-cols-dropdown" style="display:none;position:absolute;top:calc(100% + 4px);left:0;
+             background:#fff;border:1px solid var(--border);border-radius:6px;
+             box-shadow:0 4px 16px rgba(0,0,0,.12);z-index:300;min-width:150px;padding:6px 0;">
+          <div style="padding:5px 12px;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;
+               color:var(--text-muted);border-bottom:1px solid var(--border);margin-bottom:4px;">
+            Visible columns
+          </div>
+          <!-- checkboxes injected by JS -->
+        </div>
+      </div>
+    </div>
+    <span id="reg-match-count" style="font-size:.78rem;color:var(--text-muted);"></span>
+  </div>
+
+  <table id="register-table">
     <thead>
-      <tr>
-        <th>Date</th>
-        <th>Description</th>
-        <th>Transfer</th>
-        <th>Memo</th>
-        <th class="amount">Debit</th>
-        <th class="amount">Credit</th>
-        <th class="amount">Balance</th>
+      <tr id="reg-header-row">
+        <th data-col="0" style="width:28px;"></th>
+        <th data-col="1" class="sortable" data-type="date">Date <span class="sort-arrow"></span></th>
+        <th data-col="2" class="sortable" data-type="text">Description <span class="sort-arrow"></span></th>
+        <th data-col="3" class="sortable" data-type="text">Transfer <span class="sort-arrow"></span></th>
+        <th data-col="4" class="sortable" data-type="text">Memo <span class="sort-arrow"></span></th>
+        <th data-col="5" class="sortable amount" data-type="num">Debit <span class="sort-arrow"></span></th>
+        <th data-col="6" class="sortable amount" data-type="num">Credit <span class="sort-arrow"></span></th>
+        <th data-col="7" class="sortable amount" data-type="num">Balance <span class="sort-arrow"></span></th>
+      </tr>
+      <tr id="filter-row" style="display:none;">
+        <th data-col="0"></th>
+        <th data-col="1"><input class="filter-input" data-col="1" placeholder="date…"></th>
+        <th data-col="2"><input class="filter-input" data-col="2" placeholder="description…"></th>
+        <th data-col="3"><input class="filter-input" data-col="3" placeholder="account…"></th>
+        <th data-col="4"><input class="filter-input" data-col="4" placeholder="memo…"></th>
+        <th data-col="5"><input class="filter-input" data-col="5" placeholder="debit…" style="text-align:right;"></th>
+        <th data-col="6"><input class="filter-input" data-col="6" placeholder="credit…" style="text-align:right;"></th>
+        <th data-col="7"></th>
       </tr>
     </thead>
     <tbody>
       {% for row in rows %}
       {% with s=row.split txn=row.txn %}
-      <tr>
-        <td style="white-space:nowrap">{{ txn.post_date }}</td>
-        <td>{{ txn.description|default:"—" }}</td>
-        <td style="font-size:.82rem;color:#7f8fa4">{{ row.other_label }}</td>
-        <td style="font-size:.82rem;color:#7f8fa4">{{ s.memo|default:"" }}</td>
-        <td class="amount {% if s.value_num > 0 %}positive{% endif %}">
-          {% if s.value_num > 0 %}{{ s.value_num|floatformat:2 }}{% endif %}
+
+      {# ── Main row ── #}
+      <tr class="register-row" data-txn="{{ txn.id }}" style="cursor:pointer;">
+        <td data-col="0" style="text-align:center;color:var(--text-muted);font-size:.6rem;padding-right:0;">
+          <span class="expand-icon">▶</span>
         </td>
-        <td class="amount {% if s.value_num < 0 %}negative{% endif %}">
-          {% if s.value_num < 0 %}{{ s.value_num|floatformat:2 }}{% endif %}
+        <td data-col="1" data-sort="{{ txn.post_date|date:'Y-m-d' }}" style="white-space:nowrap">{{ txn.post_date|udate:prefs }}</td>
+        <td data-col="2">{{ txn.description|default:"—" }}</td>
+        <td data-col="3" style="font-size:.82rem;color:var(--text-muted)">{{ row.other_label }}</td>
+        <td data-col="4" style="font-size:.82rem;color:var(--text-muted)">{{ s.memo|default:"" }}</td>
+        <td data-col="5" class="amount {% if s.value_num > 0 %}positive{% endif %}"
+            data-sort="{% if s.value_num > 0 %}{{ s.value_num }}{% else %}0{% endif %}">
+          {% if s.value_num > 0 %}{{ s.value_num|amt:prefs }}{% endif %}
         </td>
-        <td class="amount {% if row.running >= 0 %}positive{% else %}negative{% endif %}">
-          {{ row.running|floatformat:2 }}
+        <td data-col="6" class="amount {% if s.value_num < 0 %}negative{% endif %}"
+            data-sort="{% if s.value_num < 0 %}{{ s.value_num|floatformat:4|slice:'1:' }}{% else %}0{% endif %}">
+          {% if s.value_num < 0 %}{{ s.value_num|amt:prefs }}{% endif %}
+        </td>
+        <td data-col="7" class="amount {% if row.running >= 0 %}positive{% else %}negative{% endif %}"
+            data-sort="{{ row.running }}">
+          {{ row.running|amt:prefs }}
         </td>
       </tr>
+
+      {# ── Detail row (hidden) ── #}
+      <tr class="detail-row" data-for="{{ txn.id }}"
+          data-edit-url="{% url 'transaction_edit' txn.id %}?partial=1"
+          style="display:none;">
+        <td class="detail-cell" colspan="8" style="padding:0;background:var(--bg);border-bottom:2px solid var(--border);">
+          <div class="detail-inner">
+          <div class="split-detail">
+            <div class="split-detail-header">
+              <span>{{ txn.post_date|udate:prefs }} &mdash; {{ txn.description|default:"(no description)" }}</span>
+              <button type="button" class="btn btn-primary edit-inline-btn"
+                      style="padding:4px 14px;font-size:.8rem;">Edit</button>
+            </div>
+            <table class="split-table">
+              <thead>
+                <tr>
+                  <th>Account</th>
+                  <th>Memo</th>
+                  <th class="amount">Debit</th>
+                  <th class="amount">Credit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for sp in txn.splits.all %}
+                <tr {% if sp.account == account %}style="font-weight:600;"{% endif %}>
+                  <td>
+                    <a href="{% url 'account_register' sp.account.id %}"
+                       style="color:var(--accent);text-decoration:none;">{{ sp.account.name }}</a>
+                  </td>
+                  <td style="color:var(--text-muted);font-size:.82rem;">{{ sp.memo|default:"" }}</td>
+                  <td class="amount {% if sp.value_num > 0 %}positive{% endif %}">
+                    {% if sp.value_num > 0 %}{{ sp.value_num|amt:prefs }}{% endif %}
+                  </td>
+                  <td class="amount {% if sp.value_num < 0 %}negative{% endif %}">
+                    {% if sp.value_num < 0 %}{{ sp.value_num|amt:prefs }}{% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          </div>{# /detail-inner #}
+        </td>
+      </tr>
+
       {% endwith %}
       {% endfor %}
     </tbody>
   </table>
   {% else %}
-  <p style="color:#7f8fa4;font-size:.9rem;">No transactions in this account.</p>
+  <p style="padding:20px;color:var(--text-muted);font-size:.9rem;">No transactions in this account.</p>
   {% endif %}
 </div>
+
+<style>
+  /* ── Toolbar ── */
+  .reg-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .reg-tool-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: .78rem;
+    cursor: pointer;
+    color: var(--text-muted);
+    transition: background .1s, color .1s;
+  }
+  .reg-tool-btn:hover, .reg-tool-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* ── Sort headers ── */
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: var(--accent); }
+  .sort-arrow { font-size: .65rem; margin-left: 3px; color: var(--text-muted); }
+  th.sort-asc  .sort-arrow::after { content: '▲'; color: var(--accent); }
+  th.sort-desc .sort-arrow::after { content: '▼'; color: var(--accent); }
+
+  /* ── Filter row ── */
+  #filter-row th { padding: 4px 6px; background: #f7fbf7; }
+  .filter-input {
+    width: 100%; padding: 3px 6px; font-size: .78rem;
+    border: 1px solid var(--border); border-radius: 3px;
+    background: #fff; box-sizing: border-box;
+  }
+  .filter-input:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Column dropdown ── */
+  .col-check-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 14px; font-size: .82rem; cursor: pointer;
+  }
+  .col-check-item:hover { background: var(--table-alt); }
+  .col-check-item input { cursor: pointer; }
+
+  /* ── Detail / split ── */
+  .split-detail { padding: 12px 20px 16px; }
+  .split-detail-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px; font-size: .85rem; font-weight: 600; color: var(--text);
+  }
+  .split-table { font-size: .84rem; margin: 0; }
+  .split-table th { background: none; font-size: .7rem; padding: 5px 12px; }
+  .split-table td { padding: 6px 12px; border-bottom: 1px solid var(--border); }
+  .split-table tr:last-child td { border-bottom: none; }
+
+  .register-row:hover .expand-icon { color: var(--accent); }
+  .register-row.expanded .expand-icon { transform: rotate(90deg); display: inline-block; color: var(--accent); }
+  .expand-icon { transition: transform .15s; display: inline-block; }
+
+  .message.error { padding: 7px 12px; font-size: .82rem; }
+  #inline-txn-form input, #inline-txn-form select {
+    padding: 4px 6px; font-size: .82rem;
+    border: 1px solid var(--border); border-radius: 4px;
+    width: 100%; background: #fff;
+  }
+  #inline-txn-form input:focus, #inline-txn-form select:focus { outline: none; border-color: var(--accent); }
+  .balance-ok   { color: var(--success); font-weight: 600; }
+  .balance-warn { color: var(--danger);  font-weight: 600; }
+
+  /* hidden-col utility — toggled by JS */
+  #register-table td.col-hidden,
+  #register-table th.col-hidden { display: none; }
+  #filter-row th.col-hidden { display: none; }
+</style>
+
+<script>
+(function () {
+
+  const table  = document.getElementById('register-table');
+  const tbody  = table?.querySelector('tbody');
+  if (!tbody) return;
+
+  /* ═══════════════════════════════════════════════════════════
+     COLUMN DEFINITIONS
+     col index matches data-col attribute on th/td
+  ═══════════════════════════════════════════════════════════ */
+  const COLS = [
+    { idx: 0, label: null   },          // expand — never toggled
+    { idx: 1, label: 'Date'        },
+    { idx: 2, label: 'Description' },
+    { idx: 3, label: 'Transfer'    },
+    { idx: 4, label: 'Memo'        },
+    { idx: 5, label: 'Debit'       },
+    { idx: 6, label: 'Credit'      },
+    { idx: 7, label: 'Balance'     },
+  ];
+  // Default: memo hidden
+  const hidden = new Set([4]);
+
+  /* ── Helpers ── */
+  function allCells(colIdx) {
+    return table.querySelectorAll(`th[data-col="${colIdx}"], td[data-col="${colIdx}"]`);
+  }
+  function applyColVisibility() {
+    COLS.forEach(c => {
+      if (!c.label) return;
+      allCells(c.idx).forEach(el => el.classList.toggle('col-hidden', hidden.has(c.idx)));
+    });
+    // Adjust detail-row colspan
+    const visible = COLS.filter(c => !hidden.has(c.idx)).length;
+    table.querySelectorAll('td.detail-cell').forEach(td => td.colSpan = visible);
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     COLUMNS DROPDOWN
+  ═══════════════════════════════════════════════════════════ */
+  const colsBtn  = document.getElementById('reg-cols-btn');
+  const colsDrop = document.getElementById('reg-cols-dropdown');
+
+  // Build checkboxes
+  COLS.filter(c => c.label).forEach(c => {
+    const item = document.createElement('label');
+    item.className = 'col-check-item';
+    item.innerHTML = `<input type="checkbox" ${hidden.has(c.idx) ? '' : 'checked'}> ${c.label}`;
+    item.querySelector('input').addEventListener('change', ev => {
+      if (ev.target.checked) hidden.delete(c.idx); else hidden.add(c.idx);
+      applyColVisibility();
+    });
+    colsDrop.appendChild(item);
+  });
+
+  colsBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    colsDrop.style.display = colsDrop.style.display === 'none' ? '' : 'none';
+    colsBtn.classList.toggle('active', colsDrop.style.display !== 'none');
+  });
+  document.addEventListener('click', e => {
+    if (!colsDrop.contains(e.target) && e.target !== colsBtn) {
+      colsDrop.style.display = 'none'; colsBtn.classList.remove('active');
+    }
+  });
+
+  applyColVisibility();   // apply defaults on load
+
+  /* ═══════════════════════════════════════════════════════════
+     SORT
+  ═══════════════════════════════════════════════════════════ */
+  let sortState = { col: null, asc: true };
+
+  // Collect row pairs: [register-row, detail-row]
+  function rowPairs() {
+    const pairs = [];
+    const rows = Array.from(tbody.children);
+    for (let i = 0; i < rows.length; i += 2) {
+      pairs.push([rows[i], rows[i + 1]]);
+    }
+    return pairs;
+  }
+
+  function sortVal(row, colIdx, type) {
+    const td = row.querySelector(`td[data-col="${colIdx}"]`);
+    if (!td) return '';
+    const raw = td.dataset.sort;
+    if (raw !== undefined) {
+      return type === 'num' ? (parseFloat(raw) || 0) : raw;
+    }
+    return td.textContent.trim().toLowerCase();
+  }
+
+  table.querySelectorAll('th.sortable').forEach(th => {
+    th.addEventListener('click', () => {
+      const col  = parseInt(th.dataset.col);
+      const type = th.dataset.type;
+      if (sortState.col === col) sortState.asc = !sortState.asc;
+      else { sortState.col = col; sortState.asc = true; }
+
+      // Update arrows
+      table.querySelectorAll('th.sortable').forEach(h => h.classList.remove('sort-asc', 'sort-desc'));
+      th.classList.add(sortState.asc ? 'sort-asc' : 'sort-desc');
+
+      const pairs = rowPairs();
+      pairs.sort((a, b) => {
+        const va = sortVal(a[0], col, type);
+        const vb = sortVal(b[0], col, type);
+        let cmp = va < vb ? -1 : va > vb ? 1 : 0;
+        return sortState.asc ? cmp : -cmp;
+      });
+      pairs.forEach(([r, d]) => { tbody.appendChild(r); tbody.appendChild(d); });
+      applyFilter();  // recount
+    });
+  });
+
+  /* ═══════════════════════════════════════════════════════════
+     FILTER
+  ═══════════════════════════════════════════════════════════ */
+  const filterBtn = document.getElementById('reg-filter-btn');
+  const filterRow = document.getElementById('filter-row');
+  const matchCount = document.getElementById('reg-match-count');
+  const filters = {};  // colIdx → string
+
+  filterBtn.addEventListener('click', () => {
+    const open = filterRow.style.display === '';
+    filterRow.style.display = open ? 'none' : '';
+    filterBtn.classList.toggle('active', !open);
+    if (!open) filterRow.querySelector('input')?.focus();
+    else { Object.keys(filters).forEach(k => delete filters[k]); applyFilter(); }
+  });
+
+  table.querySelectorAll('.filter-input').forEach(inp => {
+    inp.addEventListener('input', () => {
+      const col = inp.dataset.col;
+      filters[col] = inp.value.trim().toLowerCase();
+      applyFilter();
+    });
+  });
+
+  function applyFilter() {
+    const pairs = rowPairs();
+    const active = Object.entries(filters).filter(([, v]) => v.length > 0);
+    let visible = 0;
+    pairs.forEach(([reg, det]) => {
+      const show = active.every(([col, val]) => {
+        const td = reg.querySelector(`td[data-col="${col}"]`);
+        return !td || td.textContent.trim().toLowerCase().includes(val);
+      });
+      reg.style.display   = show ? '' : 'none';
+      det.style.display   = 'none';  // always collapse filtered rows
+      if (show) { visible++; reg.classList.remove('expanded'); }
+    });
+    const total = pairs.length;
+    matchCount.textContent = active.length > 0 ? `${visible} of ${total} transactions` : '';
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     EXPAND / COLLAPSE
+  ═══════════════════════════════════════════════════════════ */
+  document.querySelectorAll('.register-row').forEach(row => {
+    row.addEventListener('click', function (e) {
+      if (e.target.tagName === 'A' || e.target.tagName === 'BUTTON') return;
+      const txnId = this.dataset.txn;
+      const detail = document.querySelector(`.detail-row[data-for="${txnId}"]`);
+      const isOpen = detail.style.display !== 'none';
+      closeAll();
+      if (!isOpen) { detail.style.display = ''; this.classList.add('expanded'); }
+    });
+  });
+
+  function closeAll() {
+    document.querySelectorAll('.detail-row').forEach(d => d.style.display = 'none');
+    document.querySelectorAll('.register-row').forEach(r => r.classList.remove('expanded'));
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     NEW TRANSACTION BUTTON
+  ═══════════════════════════════════════════════════════════ */
+  const newBtn   = document.getElementById('new-txn-btn');
+  const newPanel = document.getElementById('new-txn-panel');
+
+  newBtn.addEventListener('click', async () => {
+    newBtn.style.display = 'none';
+    newPanel.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:.85rem;">Loading…</div>';
+    newPanel.style.display = '';
+    const res = await fetch(newBtn.dataset.url);
+    newPanel.innerHTML = await res.text();
+    newPanel.querySelectorAll('script').forEach(s => {
+      const live = document.createElement('script');
+      live.textContent = s.textContent;
+      document.head.appendChild(live);
+    });
+    newPanel.querySelector('#new-description')?.focus();
+  });
+
+  /* ═══════════════════════════════════════════════════════════
+     INLINE EDIT
+  ═══════════════════════════════════════════════════════════ */
+  document.addEventListener('click', async function (e) {
+    if (!e.target.classList.contains('edit-inline-btn')) return;
+    const detailRow = e.target.closest('.detail-row');
+    const inner = detailRow.querySelector('.detail-inner');
+    inner.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:.85rem;">Loading…</div>';
+    const res = await fetch(detailRow.dataset.editUrl);
+    inner.innerHTML = await res.text();
+    attachInlineForm(inner, detailRow);
+  });
+
+  function attachInlineForm(inner, detailRow) {
+    const form = inner.querySelector('#inline-txn-form');
+    if (!form) return;
+    const body = inner.querySelector('#inline-splits-body');
+
+    function updateBalance() {
+      let total = 0;
+      body.querySelectorAll('.inline-split-row').forEach(r => {
+        const d = parseFloat(r.querySelector('.pi-debit').value.replace(',', '.')) || 0;
+        const c = parseFloat(r.querySelector('.pi-credit').value.replace(',', '.')) || 0;
+        total += d - c;
+      });
+      const el = inner.querySelector('#pi-balance');
+      if (!el) return;
+      const rounded = Math.round(total * 100) / 100;
+      if (rounded === 0) { el.textContent = '✓ Balanced'; el.className = 'balance-ok'; }
+      else { el.textContent = `Out of balance: ${rounded > 0 ? '+' : ''}${rounded.toFixed(2)}`; el.className = 'balance-warn'; }
+    }
+
+    function renumber() {
+      body.querySelectorAll('.inline-split-row').forEach((r, i) => {
+        r.querySelectorAll('[name]').forEach(el => { el.name = el.name.replace(/split_\d+_/, `split_${i}_`); });
+      });
+    }
+
+    function attachRemove(row) {
+      row.querySelector('.pi-remove').addEventListener('click', () => {
+        if (body.querySelectorAll('.inline-split-row').length <= 2) return;
+        row.remove(); renumber(); updateBalance();
+      });
+    }
+    body.querySelectorAll('.inline-split-row').forEach(attachRemove);
+
+    inner.querySelector('#pi-add-split').addEventListener('click', () => {
+      const idx = body.querySelectorAll('.inline-split-row').length;
+      const clone = body.querySelector('.inline-split-row').cloneNode(true);
+      clone.querySelectorAll('[name]').forEach(el => {
+        el.name = el.name.replace(/split_\d+_/, `split_${idx}_`);
+        if (el.tagName === 'INPUT') el.value = '';
+        if (el.tagName === 'SELECT') el.selectedIndex = 0;
+      });
+      body.appendChild(clone);
+      attachRemove(clone);
+      clone.querySelector('select').focus();
+      updateBalance();
+    });
+
+    body.addEventListener('input', updateBalance);
+    updateBalance();
+
+    inner.querySelector('#pi-cancel').addEventListener('click', () => { location.reload(); });
+
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      body.querySelectorAll('.inline-split-row').forEach(r => {
+        const d = parseFloat(r.querySelector('.pi-debit').value.replace(',', '.')) || 0;
+        const c = parseFloat(r.querySelector('.pi-credit').value.replace(',', '.')) || 0;
+        r.querySelector('.pi-debit').value = (d - c).toFixed(4);
+      });
+      const res = await fetch(form.action, { method: 'POST', body: new FormData(form) });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && data.ok) { location.reload(); return; }
+      }
+      inner.innerHTML = await res.text();
+      attachInlineForm(inner, detailRow);
+    });
+  }
+
+})();
+</script>
 {% endblock %}

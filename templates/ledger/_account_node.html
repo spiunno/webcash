@@ -1,17 +1,14 @@
 {% load ledger_tags %}
-{% with type_label=account.account_type|account_type_label %}
 {% if depth == 0 %}
-<div class="nav-section-title">{{ type_label }}</div>
+<div class="nav-section-title">{{ account.account_type|account_type_label }}</div>
 {% endif %}
-{% endwith %}
 
 {% if account.child_list %}
-<details {% if depth == 0 %}open{% endif %}>
-  <summary>
+<details {% if depth == 0 %}open{% endif %} class="nav-tree-item">
+  <summary class="nav-summary">
+    <span class="nav-toggle">&#9654;</span>
     <a class="nav-link {% if depth > 0 %}nav-child{% endif %} {% if request.resolver_match.kwargs.account_id == account.id|stringformat:'s' %}active{% endif %}"
-       href="{% url 'account_register' account.id %}">
-      {{ account.name }}
-    </a>
+       href="{% url 'account_register' account.id %}">{{ account.name }}</a>
   </summary>
   {% for child in account.child_list %}
     {% include 'ledger/_account_node.html' with account=child depth=depth|add:1 %}
@@ -19,7 +16,5 @@
 </details>
 {% else %}
 <a class="nav-link {% if depth > 0 %}nav-child{% endif %} {% if request.resolver_match.kwargs.account_id == account.id|stringformat:'s' %}active{% endif %}"
-   href="{% url 'account_register' account.id %}">
-  {{ account.name }}
-</a>
+   href="{% url 'account_register' account.id %}">{{ account.name }}</a>
 {% endif %}

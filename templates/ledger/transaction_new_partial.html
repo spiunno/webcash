@@ -1,0 +1,360 @@
+{% load ledger_tags %}
+<div class="new-txn-wrap">
+
+{% if errors %}
+<div style="margin-bottom:10px;">
+  {% for e in errors %}<div class="message error" style="margin-bottom:4px;">{{ e }}</div>{% endfor %}
+</div>
+{% endif %}
+
+<form id="new-txn-form"
+      action="{% url 'transaction_new' account.id %}?partial=1"
+      method="post"
+      autocomplete="off">
+  {% csrf_token %}
+  <input type="hidden" name="partial" value="1">
+  <input type="hidden" name="mode" id="new-mode" value="simple">
+
+  {# ── Header: date + description ── #}
+  <div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-end;">
+    <div class="form-group" style="margin:0;flex:0 0 150px;position:relative;">
+      <label style="font-size:.73rem;">Date</label>
+      <input type="text" id="new-date-display" placeholder="DD/MM or YYYY-MM-DD"
+             value="{{ default_date }}"
+             style="padding:5px 8px;font-size:.84rem;width:100%;
+                    border:1px solid var(--border);border-radius:4px;">
+      <input type="hidden" name="post_date" id="new-date-iso" value="{{ default_date }}">
+    </div>
+    <div class="form-group" style="margin:0;flex:1;position:relative;">
+      <label style="font-size:.73rem;">Description</label>
+      <input type="text" id="new-description" name="description"
+             placeholder="Payee / description"
+             style="padding:5px 8px;font-size:.84rem;width:100%;
+                    border:1px solid var(--border);border-radius:4px;">
+      <div id="new-ac-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;
+           background:#fff;border:1px solid var(--border);border-radius:4px;
+           box-shadow:0 4px 12px rgba(0,0,0,.12);z-index:200;max-height:220px;overflow-y:auto;"></div>
+    </div>
+  </div>
+
+  {# ── Simple mode ── #}
+  <div id="new-simple-section">
+    <table style="width:100%;font-size:.83rem;border-collapse:collapse;margin-bottom:8px;">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:4px 8px;font-size:.7rem;text-transform:uppercase;
+              letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:40%;">To Account</th>
+          <th style="text-align:right;padding:4px 8px;font-size:.7rem;text-transform:uppercase;
+              letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:15%;">Debit (+)</th>
+          <th style="text-align:right;padding:4px 8px;font-size:.7rem;text-transform:uppercase;
+              letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:15%;">Credit (−)</th>
+          <th style="text-align:left;padding:4px 8px;font-size:.7rem;text-transform:uppercase;
+              letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);">Memo</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="padding:4px 6px;">
+            <select name="to_account" id="new-to-account"
+                    style="width:100%;padding:4px 6px;font-size:.82rem;
+                           border:1px solid var(--border);border-radius:4px;">
+              <option value="">— select account —</option>
+              {% for acc in all_accounts %}
+              <option value="{{ acc.id }}">{{ acc.full_path }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td style="padding:4px 6px;">
+            <input type="text" name="debit" id="new-debit" placeholder="0.00"
+                   style="width:100%;padding:4px 6px;font-size:.82rem;text-align:right;
+                          border:1px solid var(--border);border-radius:4px;">
+          </td>
+          <td style="padding:4px 6px;">
+            <input type="text" name="credit" id="new-credit" placeholder="0.00"
+                   style="width:100%;padding:4px 6px;font-size:.82rem;text-align:right;
+                          border:1px solid var(--border);border-radius:4px;">
+          </td>
+          <td style="padding:4px 6px;">
+            <input type="text" name="memo" id="new-memo" placeholder="memo"
+                   style="width:100%;padding:4px 6px;font-size:.82rem;
+                          border:1px solid var(--border);border-radius:4px;">
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  {# ── Multi-split section (hidden by default) ── #}
+  <div id="new-multi-section" style="display:none;">
+    <table style="width:100%;font-size:.83rem;border-collapse:collapse;margin-bottom:8px;">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:4px 8px;font-size:.7rem;text-transform:uppercase;
+              letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:36%;">Account</th>
+          <th style="text-align:left;padding:4px 8px;font-size:.7rem;text-transform:uppercase;
+              letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:22%;">Memo</th>
+          <th style="text-align:right;padding:4px 8px;font-size:.7rem;text-transform:uppercase;
+              letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:16%;">Debit (+)</th>
+          <th style="text-align:right;padding:4px 8px;font-size:.7rem;text-transform:uppercase;
+              letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:16%;">Credit (−)</th>
+          <th style="border-bottom:2px solid var(--border);width:28px;"></th>
+        </tr>
+      </thead>
+      <tbody id="new-splits-body">
+        {# rows injected by JS when switching to multi mode #}
+      </tbody>
+    </table>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <button type="button" id="new-add-split"
+              style="background:none;border:1px dashed var(--border);color:var(--accent);
+                     padding:3px 12px;border-radius:4px;cursor:pointer;font-size:.8rem;">+ Add split</button>
+      <span id="new-balance" style="font-size:.8rem;"></span>
+    </div>
+  </div>
+
+  {# ── Toggle + buttons ── #}
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <button type="button" id="new-toggle-multi"
+            style="background:none;border:none;color:var(--accent);cursor:pointer;
+                   font-size:.78rem;padding:0;text-decoration:underline;">
+      Show multi-split
+    </button>
+    <div style="display:flex;gap:8px;">
+      <button type="submit" class="btn btn-primary" style="padding:6px 18px;font-size:.84rem;">Save</button>
+      <button type="button" id="new-cancel"
+              class="btn" style="padding:6px 18px;font-size:.84rem;background:var(--border);color:var(--text);">
+        Cancel
+      </button>
+    </div>
+  </div>
+</form>
+</div>
+
+{# Render all_accounts as JSON for JS cloning #}
+<script id="new-accounts-json" type="application/json">
+[{% for acc in all_accounts %}{"id":{{ acc.id }},"name":"{{ acc.full_path|escapejs }}"}{% if not forloop.last %},{% endif %}{% endfor %}]
+</script>
+<script id="new-current-account-json" type="application/json">
+{"id":{{ account.id }},"name":"{{ account.name|escapejs }}"}
+</script>
+<script>
+(function(){
+  const form   = document.getElementById('new-txn-form');
+  const modeIn = document.getElementById('new-mode');
+  const simple = document.getElementById('new-simple-section');
+  const multi  = document.getElementById('new-multi-section');
+  const toggle = document.getElementById('new-toggle-multi');
+  const acDrop = document.getElementById('new-ac-dropdown');
+  const descIn = document.getElementById('new-description');
+
+  // ── Date parsing ──────────────────────────────────────────────────────
+  const displayIn = document.getElementById('new-date-display');
+  const isoIn     = document.getElementById('new-date-iso');
+
+  function parseDate(raw) {
+    // YYYY-MM-DD
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const year = new Date().getFullYear();
+    // DD/MM/YYYY or DD.MM.YYYY
+    let m = raw.match(/^(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{4})$/);
+    if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    // DD/MM or DD.MM  → assume current year
+    m = raw.match(/^(\d{1,2})[\/\.](\d{1,2})$/);
+    if (m) return `${year}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    return null;
+  }
+
+  displayIn.addEventListener('blur', () => {
+    const iso = parseDate(displayIn.value.trim());
+    if (iso) { isoIn.value = iso; displayIn.value = iso; }
+    else displayIn.style.borderColor = 'var(--danger)';
+  });
+  displayIn.addEventListener('focus', () => { displayIn.style.borderColor = ''; });
+  // Initialise display
+  displayIn.value = isoIn.value;
+
+  // ── Autocomplete ──────────────────────────────────────────────────────
+  let acTimer = null;
+  const acUrl = '{% url "transaction_autocomplete" account.id %}';
+
+  descIn.addEventListener('input', () => {
+    clearTimeout(acTimer);
+    const q = descIn.value.trim();
+    if (q.length < 2) { acDrop.style.display = 'none'; return; }
+    acTimer = setTimeout(async () => {
+      const res = await fetch(`${acUrl}?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      if (!data.results.length) { acDrop.style.display = 'none'; return; }
+      acDrop.innerHTML = data.results.map(r =>
+        `<div class="ac-item" data-json='${JSON.stringify(r).replace(/'/g,"&#39;")}'>
+           <span style="font-size:.84rem;">${r.description}</span>
+           ${!r.multi ? `<span style="font-size:.75rem;color:var(--text-muted);float:right">
+             ${r.account_name} · ${r.debit?'+':'−'}${r.amount}</span>` : ''}
+         </div>`
+      ).join('');
+      acDrop.style.display = 'block';
+    }, 200);
+  });
+
+  acDrop.addEventListener('click', e => {
+    const item = e.target.closest('.ac-item');
+    if (!item) return;
+    const r = JSON.parse(item.dataset.json);
+    descIn.value = r.description;
+    acDrop.style.display = 'none';
+    if (!r.multi && r.account_id) {
+      const sel = document.getElementById('new-to-account');
+      if (sel) sel.value = r.account_id;
+      const debit = document.getElementById('new-debit');
+      const credit = document.getElementById('new-credit');
+      if (r.debit) { debit.value = r.amount; credit.value = ''; }
+      else         { credit.value = r.amount; debit.value = ''; }
+    }
+  });
+
+  document.addEventListener('click', e => {
+    if (!acDrop.contains(e.target) && e.target !== descIn) acDrop.style.display = 'none';
+  });
+
+  // ── Multi-split toggle ────────────────────────────────────────────────
+  const accounts = JSON.parse(document.getElementById('new-accounts-json').textContent);
+  const curAcc   = JSON.parse(document.getElementById('new-current-account-json').textContent);
+
+  function accountOptions(selectedId) {
+    return accounts.map(a =>
+      `<option value="${a.id}" ${a.id == selectedId ? 'selected' : ''}>${a.name.replace(/</g,'&lt;')}</option>`
+    ).join('');
+  }
+
+  function splitRow(idx, accId, debit, credit, memo) {
+    return `<tr class="nm-split-row">
+      <td style="padding:4px 6px;">
+        <select name="split_${idx}_account" required
+                style="width:100%;padding:4px 6px;font-size:.82rem;border:1px solid var(--border);border-radius:4px;">
+          <option value="">— account —</option>${accountOptions(accId)}
+        </select>
+      </td>
+      <td style="padding:4px 6px;">
+        <input type="text" name="split_${idx}_memo" value="${memo}"
+               style="width:100%;padding:4px 6px;font-size:.82rem;border:1px solid var(--border);border-radius:4px;" placeholder="memo">
+      </td>
+      <td style="padding:4px 6px;">
+        <input type="text" name="split_${idx}_value" class="nm-debit" value="${debit}" placeholder="0.00"
+               style="width:100%;padding:4px 6px;font-size:.82rem;border:1px solid var(--border);border-radius:4px;text-align:right;">
+      </td>
+      <td style="padding:4px 6px;">
+        <input type="text" name="split_${idx}_value_credit" class="nm-credit" value="${credit}" placeholder="0.00"
+               style="width:100%;padding:4px 6px;font-size:.82rem;border:1px solid var(--border);border-radius:4px;text-align:right;">
+      </td>
+      <td style="padding:4px 2px;text-align:center;">
+        <button type="button" class="nm-remove"
+                style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.9rem;padding:2px 4px;">✕</button>
+      </td>
+    </tr>`;
+  }
+
+  const splitsBody = document.getElementById('new-splits-body');
+
+  function renumberSplits() {
+    splitsBody.querySelectorAll('.nm-split-row').forEach((r, i) => {
+      r.querySelectorAll('[name]').forEach(el => {
+        el.name = el.name.replace(/split_\d+_/, `split_${i}_`);
+      });
+    });
+  }
+
+  function updateBalance() {
+    let total = 0;
+    splitsBody.querySelectorAll('.nm-split-row').forEach(r => {
+      const d = parseFloat(r.querySelector('.nm-debit').value.replace(',','.')) || 0;
+      const c = parseFloat(r.querySelector('.nm-credit').value.replace(',','.')) || 0;
+      total += d - c;
+    });
+    const el = document.getElementById('new-balance');
+    const rounded = Math.round(total * 100) / 100;
+    if (rounded === 0) { el.textContent = '✓ Balanced'; el.className = 'balance-ok'; }
+    else { el.textContent = `Out of balance: ${rounded > 0 ? '+' : ''}${rounded.toFixed(2)}`; el.className = 'balance-warn'; }
+  }
+
+  function attachRemove(row) {
+    row.querySelector('.nm-remove').addEventListener('click', () => {
+      if (splitsBody.querySelectorAll('.nm-split-row').length <= 2) return;
+      row.remove(); renumberSplits(); updateBalance();
+    });
+  }
+
+  let multiActive = false;
+  toggle.addEventListener('click', () => {
+    multiActive = !multiActive;
+    modeIn.value = multiActive ? 'multi' : 'simple';
+    if (multiActive) {
+      const debit  = (parseFloat(document.getElementById('new-debit').value.replace(',','.')) || 0).toFixed(2);
+      const credit = (parseFloat(document.getElementById('new-credit').value.replace(',','.')) || 0).toFixed(2);
+      const toSel  = document.getElementById('new-to-account');
+      const toId   = toSel ? toSel.value : '';
+      const memo   = document.getElementById('new-memo').value;
+      splitsBody.innerHTML =
+        splitRow(0, curAcc.id, debit, credit, memo) +
+        splitRow(1, toId, credit, debit, '');
+      splitsBody.querySelectorAll('.nm-split-row').forEach(attachRemove);
+      splitsBody.addEventListener('input', updateBalance);
+      updateBalance();
+      simple.style.display = 'none'; multi.style.display = '';
+      toggle.textContent = 'Hide multi-split';
+    } else {
+      simple.style.display = ''; multi.style.display = 'none';
+      toggle.textContent = 'Show multi-split';
+    }
+  });
+
+  document.getElementById('new-add-split').addEventListener('click', () => {
+    const idx = splitsBody.querySelectorAll('.nm-split-row').length;
+    splitsBody.insertAdjacentHTML('beforeend', splitRow(idx, '', '', '', ''));
+    attachRemove(splitsBody.lastElementChild);
+    splitsBody.lastElementChild.querySelector('select').focus();
+    updateBalance();
+  });
+
+  // ── Cancel ────────────────────────────────────────────────────────────
+  document.getElementById('new-cancel').addEventListener('click', () => {
+    document.getElementById('new-txn-panel').style.display = 'none';
+    document.getElementById('new-txn-btn').style.display = '';
+  });
+
+  // ── Submit ────────────────────────────────────────────────────────────
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    // Ensure date is parsed
+    const iso = parseDate(displayIn.value.trim());
+    if (!iso) { displayIn.style.borderColor = 'var(--danger)'; displayIn.focus(); return; }
+    isoIn.value = iso;
+
+    // In multi mode merge debit/credit → single value field
+    if (multiActive) {
+      splitsBody.querySelectorAll('.nm-split-row').forEach(r => {
+        const d = parseFloat(r.querySelector('.nm-debit').value.replace(',','.')) || 0;
+        const c = parseFloat(r.querySelector('.nm-credit').value.replace(',','.')) || 0;
+        r.querySelector('.nm-debit').value = (d - c).toFixed(4);
+      });
+    }
+
+    const res = await fetch(form.action, { method: 'POST', body: new FormData(form) });
+    if (res.ok) {
+      const data = await res.json().catch(() => null);
+      if (data && data.ok) { location.reload(); return; }
+    }
+    // Errors: re-render form
+    const panel = document.getElementById('new-txn-panel');
+    panel.innerHTML = await res.text();
+    attachNewTxnForm();
+  });
+
+})();
+</script>
+
+<style>
+  .new-txn-wrap { padding: 14px 20px 18px; }
+  .ac-item { padding: 7px 12px; cursor: pointer; font-size: .84rem; border-bottom: 1px solid var(--border); }
+  .ac-item:last-child { border-bottom: none; }
+  .ac-item:hover { background: var(--table-alt); }
+</style>

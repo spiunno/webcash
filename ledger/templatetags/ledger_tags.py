@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django import template
 
 register = template.Library()
@@ -13,3 +14,41 @@ _TYPE_LABELS = {
 @register.filter
 def account_type_label(value):
     return _TYPE_LABELS.get(value, value.title())
+
+
+@register.filter
+def amt(value, prefs):
+    """Format a number using the user's currency preferences.
+    Usage: {{ value|amt:prefs }}
+    """
+    if prefs is None or value is None:
+        return value
+    try:
+        v = Decimal(str(value))
+    except Exception:
+        return value
+
+    if prefs.decimal_separator == ',':
+        # thousands = '.', decimal = ','
+        formatted = f'{abs(v):,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+    else:
+        formatted = f'{abs(v):,.2f}'
+
+    sign = '-' if v < 0 else ''
+    sym = prefs.currency_symbol or ''
+    if prefs.currency_before:
+        return f'{sign}{sym}{formatted}'
+    return f'{sign}{formatted} {sym}'
+
+
+@register.filter
+def udate(value, prefs):
+    """Format a date using the user's date_format preference.
+    Usage: {{ value|udate:prefs }}
+    """
+    if prefs is None or value is None:
+        return value
+    try:
+        return value.strftime(prefs.date_format)
+    except Exception:
+        return value

@@ -1,4 +1,5 @@
 {% extends 'ledger/base.html' %}
+{% load ledger_tags %}
 {% block title %}Dashboard — WebCash{% endblock %}
 {% block breadcrumb %}Dashboard{% endblock %}
 
@@ -7,37 +8,34 @@
   <div class="summary-card">
     <div class="label">Net Worth</div>
     <div class="value {% if net_worth >= 0 %}positive{% else %}negative{% endif %}">
-      {{ net_worth|floatformat:2 }}
+      {{ net_worth|amt:prefs }}
     </div>
   </div>
   <div class="summary-card">
     <div class="label">Total Assets</div>
-    <div class="value positive">{{ assets|floatformat:2 }}</div>
+    <div class="value positive">{{ assets|amt:prefs }}</div>
   </div>
   <div class="summary-card">
     <div class="label">Total Liabilities</div>
     <div class="value {% if liabilities > 0 %}negative{% else %}neutral{% endif %}">
-      {{ liabilities|floatformat:2 }}
+      {{ liabilities|amt:prefs }}
     </div>
   </div>
   <div class="summary-card">
     <div class="label">Income</div>
-    <div class="value positive">{{ income|floatformat:2 }}</div>
+    <div class="value positive">{{ income|amt:prefs }}</div>
   </div>
   <div class="summary-card">
     <div class="label">Expenses</div>
     <div class="value {% if expenses > 0 %}negative{% else %}neutral{% endif %}">
-      {{ expenses|floatformat:2 }}
+      {{ expenses|amt:prefs }}
     </div>
   </div>
   <div class="summary-card">
     <div class="label">Net Income</div>
-    {% with net_income=income|add:expenses %}
     <div class="value {% if income > expenses %}positive{% else %}negative{% endif %}">
-      {% widthratio income 1 1 as i_val %}
-      {{ income|floatformat:2 }}
+      {{ income|amt:prefs }}
     </div>
-    {% endwith %}
   </div>
 </div>
 
@@ -56,7 +54,7 @@
     <tbody>
       {% for txn in recent_txns %}
       <tr>
-        <td>{{ txn.post_date }}</td>
+        <td style="white-space:nowrap">{{ txn.post_date|udate:prefs }}</td>
         <td>{{ txn.description|default:"—" }}</td>
         <td style="font-size:.8rem;color:#7f8fa4">
           {% for s in txn.splits.all %}
@@ -67,7 +65,7 @@
         </td>
         <td class="amount">
           {% for s in txn.splits.all %}
-            {% if s.value_num > 0 %}{{ s.value_num|floatformat:2 }}{% endif %}
+            {% if s.value_num > 0 %}{{ s.value_num|amt:prefs }}{% endif %}
           {% endfor %}
         </td>
       </tr>

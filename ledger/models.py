@@ -86,3 +86,58 @@ class Split(models.Model):
 
     def __str__(self):
         return f'{self.account.name} {self.value_num}'
+
+
+class UserPreferences(models.Model):
+    LANGUAGE_CHOICES = [
+        ('en', 'English'),
+        ('it', 'Italiano'),
+        ('fr', 'Français'),
+        ('de', 'Deutsch'),
+        ('es', 'Español'),
+    ]
+    DATE_FORMAT_CHOICES = [
+        ('%Y-%m-%d', 'YYYY-MM-DD  (2026-01-31)'),
+        ('%d/%m/%Y', 'DD/MM/YYYY  (31/01/2026)'),
+        ('%m/%d/%Y', 'MM/DD/YYYY  (01/31/2026)'),
+        ('%d.%m.%Y', 'DD.MM.YYYY  (31.01.2026)'),
+        ('%d %b %Y', 'DD Mon YYYY  (31 Jan 2026)'),
+    ]
+    DECIMAL_SEP_CHOICES = [
+        ('.', 'Period  1,234.56'),
+        (',', 'Comma   1.234,56'),
+    ]
+    ACCENT_CHOICES = [
+        ('#4a9238', 'Green'),
+        ('#3d8ef8', 'Blue'),
+        ('#9b59b6', 'Purple'),
+        ('#e67e22', 'Orange'),
+        ('#e05252', 'Red'),
+        ('#16a085', 'Teal'),
+    ]
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='preferences')
+    language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default='en')
+    date_format = models.CharField(max_length=20, choices=DATE_FORMAT_CHOICES, default='%Y-%m-%d')
+    decimal_separator = models.CharField(max_length=1, choices=DECIMAL_SEP_CHOICES, default='.')
+    currency_symbol = models.CharField(max_length=5, default='$')
+    currency_before = models.BooleanField(default=True, help_text='Show currency symbol before the amount')
+    accent_color = models.CharField(max_length=7, choices=ACCENT_CHOICES, default='#4a9238')
+
+    def __str__(self):
+        return f'Preferences for {self.user.username}'
+
+    @classmethod
+    def for_user(cls, user):
+        obj, _ = cls.objects.get_or_create(user=user)
+        return obj
+
+    def format_amount(self, value):
+        """Format a Decimal value according to user preferences."""
+        if self.decimal_separator == ',':
+            formatted = f'{value:,.2f}'.replace(',', 'X').replace('.', ',').replace('X', '.')
+        else:
+            formatted = f'{value:,.2f}'
+        if self.currency_before:
+            return f'{self.currency_symbol}{formatted}'
+        return f'{formatted} {self.currency_symbol}'

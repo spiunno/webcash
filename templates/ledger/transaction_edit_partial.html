@@ -1,0 +1,102 @@
+{% load ledger_tags %}
+<div class="split-detail">
+
+  {% if errors %}
+  <div style="margin-bottom:12px;">
+    {% for e in errors %}<div class="message error" style="margin-bottom:4px;">{{ e }}</div>{% endfor %}
+  </div>
+  {% endif %}
+
+  <form id="inline-txn-form"
+        action="{% url 'transaction_edit' txn.id %}?partial=1"
+        method="post">
+    {% csrf_token %}
+    <input type="hidden" name="partial" value="1">
+
+    <!-- Header -->
+    <div style="display:flex;gap:12px;margin-bottom:16px;align-items:flex-end;">
+      <div class="form-group" style="margin:0;flex:0 0 160px;">
+        <label style="font-size:.75rem;">Date</label>
+        <input type="date" name="post_date" value="{{ txn.post_date|date:'Y-m-d' }}" required
+               style="padding:5px 8px;font-size:.85rem;">
+      </div>
+      <div class="form-group" style="margin:0;flex:1;">
+        <label style="font-size:.75rem;">Description</label>
+        <input type="text" name="description" value="{{ txn.description }}"
+               placeholder="Payee / description"
+               style="padding:5px 8px;font-size:.85rem;">
+      </div>
+    </div>
+
+    <!-- Splits -->
+    <table style="width:100%;font-size:.83rem;margin-bottom:8px;border-collapse:collapse;">
+      <thead>
+        <tr>
+          <th style="text-align:left;padding:4px 8px;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:36%;">Account</th>
+          <th style="text-align:left;padding:4px 8px;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:22%;">Memo</th>
+          <th style="text-align:right;padding:4px 8px;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:16%;">Debit (+)</th>
+          <th style="text-align:right;padding:4px 8px;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);border-bottom:2px solid var(--border);width:16%;">Credit (−)</th>
+          <th style="border-bottom:2px solid var(--border);width:28px;"></th>
+        </tr>
+      </thead>
+      <tbody id="inline-splits-body">
+        {% for s in splits %}
+        <tr class="inline-split-row">
+          <td style="padding:4px 6px;">
+            <select name="split_{{ forloop.counter0 }}_account" required
+                    style="width:100%;padding:4px 6px;font-size:.82rem;border:1px solid var(--border);border-radius:4px;">
+              <option value="">— account —</option>
+              {% for acc in all_accounts %}
+              <option value="{{ acc.id }}" {% if acc.id == s.account.id %}selected{% endif %}>{{ acc.full_path }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td style="padding:4px 6px;">
+            <input type="text" name="split_{{ forloop.counter0 }}_memo" value="{{ s.memo }}"
+                   placeholder="memo"
+                   style="width:100%;padding:4px 6px;font-size:.82rem;border:1px solid var(--border);border-radius:4px;">
+          </td>
+          <td style="padding:4px 6px;">
+            <input type="text" name="split_{{ forloop.counter0 }}_value"
+                   class="pi-debit" placeholder="0.00"
+                   value="{% if s.value_num > 0 %}{{ s.value_num|floatformat:2 }}{% endif %}"
+                   style="width:100%;padding:4px 6px;font-size:.82rem;border:1px solid var(--border);border-radius:4px;text-align:right;">
+          </td>
+          <td style="padding:4px 6px;">
+            <input type="text" name="split_{{ forloop.counter0 }}_value_credit"
+                   class="pi-credit" placeholder="0.00"
+                   value="{% if s.value_num < 0 %}{{ s.value_num|floatformat:2|slice:'1:' }}{% endif %}"
+                   style="width:100%;padding:4px 6px;font-size:.82rem;border:1px solid var(--border);border-radius:4px;text-align:right;">
+          </td>
+          <td style="padding:4px 2px;text-align:center;">
+            <button type="button" class="pi-remove"
+                    style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:.9rem;padding:2px 4px;">✕</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <button type="button" id="pi-add-split"
+              style="background:none;border:1px dashed var(--border);color:var(--accent);
+                     padding:3px 12px;border-radius:4px;cursor:pointer;font-size:.8rem;">
+        + Add split
+      </button>
+      <span id="pi-balance" style="font-size:.8rem;"></span>
+    </div>
+
+    <div style="display:flex;gap:8px;">
+      <button type="submit" class="btn btn-primary" style="padding:6px 18px;font-size:.84rem;">Save</button>
+      <button type="button" id="pi-cancel"
+              class="btn" style="padding:6px 18px;font-size:.84rem;background:var(--border);color:var(--text);">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<!-- Account options for cloning into new rows -->
+<datalist id="pi-accounts-src" style="display:none;">
+  {% for acc in all_accounts %}
+  <option data-id="{{ acc.id }}">{{ acc.full_path }}</option>
+  {% endfor %}
+</datalist>

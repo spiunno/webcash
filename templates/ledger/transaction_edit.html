@@ -1,0 +1,224 @@
+{% extends 'ledger/base.html' %}
+{% load ledger_tags %}
+{% block title %}Edit Transaction — WebCash{% endblock %}
+{% block breadcrumb %}
+  <a href="{% url 'dashboard' %}" style="color:inherit;text-decoration:none;">Dashboard</a>
+  &rsaquo; Edit Transaction
+{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:860px;">
+  <div class="card-title">Edit Transaction</div>
+
+  {% if errors %}
+  <div style="margin-bottom:16px;">
+    {% for e in errors %}
+    <div class="message error">{{ e }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <form method="post" id="txn-form">
+    {% csrf_token %}
+    <input type="hidden" name="back" value="{{ back }}">
+
+    <!-- Header -->
+    <div style="display:grid;grid-template-columns:180px 1fr;gap:16px;margin-bottom:24px;">
+      <div class="form-group" style="margin:0;">
+        <label for="post_date">Date</label>
+        <input type="date" id="post_date" name="post_date"
+               value="{{ txn.post_date|date:'Y-m-d' }}" required>
+      </div>
+      <div class="form-group" style="margin:0;">
+        <label for="description">Description</label>
+        <input type="text" id="description" name="description"
+               value="{{ txn.description }}" placeholder="Payee / description">
+      </div>
+    </div>
+
+    <!-- Splits -->
+    <div style="margin-bottom:8px;font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);">
+      Splits
+    </div>
+    <table id="splits-table" style="margin-bottom:8px;">
+      <thead>
+        <tr>
+          <th>Account</th>
+          <th>Memo</th>
+          <th class="amount">Debit (+)</th>
+          <th class="amount">Credit (−)</th>
+          <th style="width:36px;"></th>
+        </tr>
+      </thead>
+      <tbody id="splits-body">
+        {% for s in splits %}
+        <tr class="split-row">
+          <td>
+            <select name="split_{{ forloop.counter0 }}_account" class="account-select" required>
+              <option value="">— choose account —</option>
+              {% for acc in all_accounts %}
+              <option value="{{ acc.id }}" {% if acc.id == s.account.id %}selected{% endif %}>
+                {{ acc.full_path }}
+              </option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            <input type="text" name="split_{{ forloop.counter0 }}_memo"
+                   value="{{ s.memo }}" placeholder="memo">
+          </td>
+          <td class="amount">
+            <input type="text" name="split_{{ forloop.counter0 }}_value"
+                   class="value-input debit-input"
+                   value="{% if s.value_num > 0 %}{{ s.value_num|floatformat:2 }}{% endif %}"
+                   placeholder="0.00" style="text-align:right;">
+          </td>
+          <td class="amount">
+            <input type="text" name="split_{{ forloop.counter0 }}_value_credit"
+                   class="value-input credit-input"
+                   value="{% if s.value_num < 0 %}{{ s.value_num|floatformat:2|slice:'1:' }}{% endif %}"
+                   placeholder="0.00" style="text-align:right;">
+          </td>
+          <td style="text-align:center;">
+            <button type="button" class="remove-split"
+                    style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;padding:4px;">✕</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <button type="button" id="add-split"
+              style="background:none;border:1px dashed var(--border);color:var(--accent);
+                     padding:5px 14px;border-radius:5px;cursor:pointer;font-size:.84rem;">
+        + Add split
+      </button>
+      <span id="balance-indicator" style="font-size:.84rem;"></span>
+    </div>
+
+    <div style="display:flex;gap:10px;">
+      <button type="submit" class="btn btn-primary">Save</button>
+      <a href="{{ back|default:'/' }}" class="btn"
+         style="background:var(--border);color:var(--text);">Cancel</a>
+    </div>
+  </form>
+</div>
+
+<!-- Hidden row template for adding splits -->
+<template id="split-row-template">
+  <tr class="split-row">
+    <td>
+      <select name="split___IDX___account" class="account-select" required>
+        <option value="">— choose account —</option>
+        {% for acc in all_accounts %}
+        <option value="{{ acc.id }}">{{ acc.full_path }}</option>
+        {% endfor %}
+      </select>
+    </td>
+    <td><input type="text" name="split___IDX___memo" placeholder="memo"></td>
+    <td class="amount">
+      <input type="text" name="split___IDX___value" class="value-input debit-input"
+             placeholder="0.00" style="text-align:right;">
+    </td>
+    <td class="amount">
+      <input type="text" name="split___IDX___value_credit" class="value-input credit-input"
+             placeholder="0.00" style="text-align:right;">
+    </td>
+    <td style="text-align:center;">
+      <button type="button" class="remove-split"
+              style="background:none;border:none;color:var(--danger);cursor:pointer;font-size:1rem;padding:4px;">✕</button>
+    </td>
+  </tr>
+</template>
+
+<style>
+  #splits-table { table-layout: fixed; }
+  #splits-table th:nth-child(1), #splits-table td:nth-child(1) { width: 38%; }
+  #splits-table th:nth-child(2), #splits-table td:nth-child(2) { width: 24%; }
+  #splits-table th:nth-child(3), #splits-table td:nth-child(3) { width: 16%; }
+  #splits-table th:nth-child(4), #splits-table td:nth-child(4) { width: 16%; }
+  #splits-table th:nth-child(5), #splits-table td:nth-child(5) { width: 36px; }
+  #splits-table input, #splits-table select {
+    width: 100%; padding: 5px 8px; font-size: .84rem;
+    border: 1px solid var(--border); border-radius: 4px;
+    background: #fff;
+  }
+  #splits-table input:focus, #splits-table select:focus { border-color: var(--accent); outline: none; }
+  .balance-ok   { color: var(--success); font-weight: 600; }
+  .balance-warn { color: var(--danger);  font-weight: 600; }
+</style>
+
+<script>
+(function () {
+  const body = document.getElementById('splits-body');
+  const form = document.getElementById('txn-form');
+
+  // ── Renumber all split field names ──────────────────────────────
+  function renumber() {
+    body.querySelectorAll('.split-row').forEach((row, i) => {
+      row.querySelectorAll('[name]').forEach(el => {
+        el.name = el.name.replace(/split_\d+_/, `split_${i}_`);
+      });
+    });
+  }
+
+  // ── Balance indicator ────────────────────────────────────────────
+  function updateBalance() {
+    let total = 0;
+    body.querySelectorAll('.split-row').forEach(row => {
+      const d = parseFloat(row.querySelector('.debit-input').value.replace(',', '.')) || 0;
+      const c = parseFloat(row.querySelector('.credit-input').value.replace(',', '.')) || 0;
+      total += d - c;
+    });
+    const el = document.getElementById('balance-indicator');
+    const rounded = Math.round(total * 100) / 100;
+    if (rounded === 0) {
+      el.textContent = '✓ Balanced';
+      el.className = 'balance-ok';
+    } else {
+      el.textContent = `Out of balance: ${rounded > 0 ? '+' : ''}${rounded.toFixed(2)}`;
+      el.className = 'balance-warn';
+    }
+  }
+
+  // ── Before submit: merge debit/credit into a single value field ──
+  form.addEventListener('submit', function () {
+    body.querySelectorAll('.split-row').forEach((row, i) => {
+      const d = parseFloat(row.querySelector('.debit-input').value.replace(',', '.')) || 0;
+      const c = parseFloat(row.querySelector('.credit-input').value.replace(',', '.')) || 0;
+      row.querySelector('.debit-input').value = (d - c).toFixed(4);
+    });
+  });
+
+  // ── Add split ────────────────────────────────────────────────────
+  document.getElementById('add-split').addEventListener('click', function () {
+    const tmpl = document.getElementById('split-row-template');
+    const clone = tmpl.content.cloneNode(true);
+    const idx = body.querySelectorAll('.split-row').length;
+    clone.querySelectorAll('[name]').forEach(el => {
+      el.name = el.name.replace('__IDX__', idx);
+    });
+    body.appendChild(clone);
+    attachRemove(body.lastElementChild);
+    body.lastElementChild.querySelector('select').focus();
+    updateBalance();
+  });
+
+  // ── Remove split ─────────────────────────────────────────────────
+  function attachRemove(row) {
+    row.querySelector('.remove-split').addEventListener('click', function () {
+      if (body.querySelectorAll('.split-row').length <= 2) return;
+      row.remove();
+      renumber();
+      updateBalance();
+    });
+  }
+  body.querySelectorAll('.split-row').forEach(attachRemove);
+
+  // ── Live balance on input ────────────────────────────────────────
+  body.addEventListener('input', updateBalance);
+  updateBalance();
+})();
+</script>
+{% endblock %}
