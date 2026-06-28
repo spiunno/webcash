@@ -5,7 +5,7 @@ from django.contrib.auth.decorators import login_required
 from django.db.models import Sum
 from django.contrib import messages
 
-from .models import Account, Transaction, Split, UserPreferences
+from .models import Account, Transaction, Split, UserPreferences, Price, CURRENCIES, get_price
 from .gnucash_import import import_file
 
 
@@ -39,20 +39,21 @@ def logout_view(request):
 
 @login_required
 def dashboard(request):
-    def sum_type(account_type):
+    ASSET_TYPES = [Account.ASSET, Account.BANK, Account.CASH, Account.RECEIVABLE,
+                   Account.STOCK, Account.MUTUAL]
+    LIAB_TYPES  = [Account.LIABILITY, Account.CREDIT, Account.PAYABLE]
+
+    def sum_types(types, negate=False):
         result = (
-            Split.objects.filter(account__account_type=account_type)
+            Split.objects.filter(account__account_type__in=types)
             .aggregate(total=Sum('value_num'))['total'] or Decimal('0')
         )
-        # ASSET/EXPENSE are debit-normal (positive = good); others are credit-normal
-        if account_type in (Account.ASSET, Account.EXPENSE):
-            return result
-        return -result
+        return -result if negate else result
 
-    assets = sum_type(Account.ASSET)
-    liabilities = sum_type(Account.LIABILITY)
-    income = sum_type(Account.INCOME)
-    expenses = sum_type(Account.EXPENSE)
+    assets     = sum_types(ASSET_TYPES)
+    liabilities = sum_types(LIAB_TYPES, negate=True)
+    income     = sum_types([Account.INCOME], negate=True)
+    expenses   = sum_types([Account.EXPENSE])
     net_worth = assets - liabilities
 
     account_tree = _build_tree()
@@ -90,7 +91,8 @@ def account_register(request, account_id):
     rows = []
     running = Decimal('0')
     for split in splits:
-        running += split.value_num * account.normal_balance
+        display_amount = split.quantity_num if split.quantity_num is not None else split.value_num
+        running += display_amount * account.normal_balance
         # Determine the "other side" label
         other_splits = [s for s in split.transaction.splits.all() if s.pk != split.pk]
         if len(other_splits) == 1:
@@ -105,6 +107,7 @@ def account_register(request, account_id):
             'txn': split.transaction,
             'other_label': other_label,
             'running': running,
+            'display_amount': display_amount,
         })
 
     return render(request, 'ledger/register.html', {
@@ -267,12 +270,28 @@ def transaction_new(request, account_id):
             if not errors:
                 try:
                     to_account = Account.objects.get(pk=to_account_id)
+                    # Cross-currency: compute or accept explicit quantity for the to-account
+                    from_ccy = account.commodity_mnemonic
+                    to_ccy = to_account.commodity_mnemonic
+                    to_quantity = None
+                    if from_ccy != to_ccy:
+                        to_qty_str = request.POST.get('to_quantity', '').strip()
+                        if to_qty_str:
+                            try:
+                                to_quantity = Decimal(to_qty_str.replace(',', '.'))
+                            except Exception:
+                                pass
+                        if to_quantity is None:
+                            rate = get_price(from_ccy, to_ccy, post_date)
+                            if rate:
+                                to_quantity = -amount * rate
                     txn = Transaction.objects.create(
                         post_date=post_date, description=description,
                         currency=account.commodity_mnemonic,
                     )
                     Split.objects.create(transaction=txn, account=account, value_num=amount, memo=memo)
-                    Split.objects.create(transaction=txn, account=to_account, value_num=-amount)
+                    Split.objects.create(transaction=txn, account=to_account, value_num=-amount,
+                                         quantity_num=to_quantity)
                     request.session['last_txn_date'] = post_date_str
                     if request.GET.get('partial') or request.POST.get('partial'):
                         from django.http import JsonResponse
@@ -367,6 +386,291 @@ def transaction_autocomplete(request, account_id):
         if len(seen) >= 8:
             break
     return JsonResponse({'results': list(seen.values())})
+
+
+# ---------------------------------------------------------------------------
+# Accounts Overview
+# ---------------------------------------------------------------------------
+
+@login_required
+def accounts_overview(request):
+    from collections import defaultdict
+    all_accounts = list(Account.objects.all())
+
+    # Direct balances per account
+    direct = defaultdict(lambda: Decimal('0'))
+    for row in Split.objects.values('account_id').annotate(total=Sum('value_num')):
+        direct[row['account_id']] = row['total'] or Decimal('0')
+
+    # Build tree and compute cumulative balances bottom-up
+    by_id = {a.pk: a for a in all_accounts}
+    for a in all_accounts:
+        a.child_list = []           # must be a separate pass before appending
+    children_map = defaultdict(list)
+    for a in all_accounts:
+        if a.parent_id and a.parent_id in by_id:
+            children_map[a.parent_id].append(a.pk)
+            by_id[a.parent_id].child_list.append(a)
+
+    cum_cache = {}
+    def cum_balance(acc_id):
+        if acc_id in cum_cache:
+            return cum_cache[acc_id]
+        total = direct[acc_id]
+        for child_id in children_map[acc_id]:
+            total += cum_balance(child_id)
+        cum_cache[acc_id] = total
+        return total
+
+    for a in all_accounts:
+        a.cum_balance = cum_balance(a.pk) * a.normal_balance
+
+    # Flatten tree with depth
+    def flatten(nodes, depth=0):
+        result = []
+        for node in sorted(nodes, key=lambda x: x.name):
+            result.append({'account': node, 'depth': depth, 'has_children': bool(node.child_list)})
+            if node.child_list:
+                result.extend(flatten(node.child_list, depth + 1))
+        return result
+
+    raw_roots = [a for a in all_accounts if a.parent_id is None]
+    if len(raw_roots) == 1 and (raw_roots[0].placeholder or raw_roots[0].name == 'Root Account'):
+        roots = raw_roots[0].child_list
+    else:
+        roots = raw_roots
+
+    flat = flatten(sorted(roots, key=lambda x: x.name))
+
+    return render(request, 'ledger/accounts.html', {
+        'flat': flat,
+        'account_tree': [],  # no sidebar needed
+    })
+
+
+# ---------------------------------------------------------------------------
+# Price list / exchange rates
+# ---------------------------------------------------------------------------
+
+@login_required
+def price_list(request):
+    from django.db.models import Max
+    latest = (
+        Price.objects.values('commodity_mnemonic', 'currency')
+        .annotate(latest_date=Max('date'))
+        .order_by('commodity_mnemonic', 'currency')
+    )
+    rows = []
+    for item in latest:
+        p = Price.objects.filter(
+            commodity_mnemonic=item['commodity_mnemonic'],
+            currency=item['currency'],
+            date=item['latest_date'],
+        ).first()
+        if p:
+            rows.append(p)
+    return render(request, 'ledger/prices.html', {'rows': rows})
+
+
+@login_required
+def update_prices_ajax(request):
+    from django.http import JsonResponse
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+    base = request.POST.get('base', 'EUR').upper()
+    try:
+        days = int(request.POST.get('days', '90'))
+    except ValueError:
+        days = 90
+    from datetime import date as date_type, timedelta
+    import urllib.request, json
+    end_date = date_type.today()
+    start_date = end_date - timedelta(days=days)
+    url = f'https://api.frankfurter.app/{start_date}..{end_date}?from={base}'
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'WebCash/1.0'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=502)
+    rates_by_date = data.get('rates', {})
+    created = updated = 0
+    for date_str, rates in rates_by_date.items():
+        for currency, value in rates.items():
+            _, is_new = Price.objects.update_or_create(
+                commodity_mnemonic=base,
+                currency=currency,
+                date=date_str,
+                defaults={'value_num': Decimal(str(value)), 'source': 'automatic',
+                          'commodity_namespace': 'CURRENCY'},
+            )
+            if is_new:
+                created += 1
+            else:
+                updated += 1
+    return JsonResponse({
+        'created': created,
+        'updated': updated,
+        'dates': len(rates_by_date),
+        'message': f'{created} new, {updated} updated across {len(rates_by_date)} trading days.',
+    })
+
+
+@login_required
+def exchange_rate_api(request):
+    from django.http import JsonResponse
+    from datetime import date as date_type
+    frm = request.GET.get('from', '').upper()
+    to  = request.GET.get('to', '').upper()
+    date_str = request.GET.get('date', '')
+    try:
+        d = date_type.fromisoformat(date_str) if date_str else date_type.today()
+    except ValueError:
+        d = date_type.today()
+    rate = get_price(frm, to, d)
+    if rate is None:
+        return JsonResponse({'rate': None, 'error': f'No price found for {frm}/{to}'})
+    return JsonResponse({'rate': str(rate), 'from': frm, 'to': to, 'date': str(d)})
+
+
+# ---------------------------------------------------------------------------
+# Account create / edit
+# ---------------------------------------------------------------------------
+
+def _account_form_ctx(all_accounts, instance=None, post=None):
+    """Build template context for the account form.
+
+    `initial` is a flat dict of field values — always safe to access in templates
+    regardless of whether we're creating or editing.
+    """
+    if post:
+        initial = {
+            'name': post.get('name', ''),
+            'code': post.get('code', ''),
+            'account_type': post.get('account_type', ''),
+            'parent_id': post.get('parent', ''),
+            'description': post.get('description', ''),
+            'commodity_namespace': post.get('commodity_namespace', Account.NAMESPACE_CURRENCY),
+            'commodity_mnemonic': post.get('commodity_mnemonic', 'EUR'),
+            'smallest_fraction': post.get('smallest_fraction', '100'),
+            'hidden': post.get('hidden') == '1',
+            'placeholder': post.get('placeholder') == '1',
+            'notes': post.get('notes', ''),
+        }
+    elif instance:
+        initial = {
+            'name': instance.name,
+            'code': instance.code,
+            'account_type': instance.account_type,
+            'parent_id': str(instance.parent_id) if instance.parent_id else '',
+            'description': instance.description,
+            'commodity_namespace': instance.commodity_namespace,
+            'commodity_mnemonic': instance.commodity_mnemonic,
+            'smallest_fraction': str(instance.smallest_fraction),
+            'hidden': instance.hidden,
+            'placeholder': instance.placeholder,
+            'notes': instance.notes,
+        }
+    else:
+        initial = {
+            'name': '', 'code': '', 'account_type': '', 'parent_id': '',
+            'description': '',
+            'commodity_namespace': Account.NAMESPACE_CURRENCY,
+            'commodity_mnemonic': 'EUR',
+            'smallest_fraction': '100',
+            'hidden': False, 'placeholder': False, 'notes': '',
+        }
+    return {
+        'all_accounts': all_accounts,
+        'type_choices': Account.TYPE_CHOICES,
+        'namespace_choices': Account.NAMESPACE_CHOICES,
+        'fraction_choices': Account.FRACTION_CHOICES,
+        'currencies': CURRENCIES,
+        'account': instance,
+        'initial': initial,
+    }
+
+
+@login_required
+def account_new(request):
+    all_accounts = list(Account.objects.order_by('account_type', 'name'))
+    errors = []
+
+    if request.method == 'POST':
+        errors = _save_account(request, None)
+        if not errors:
+            messages.success(request, 'Account created.')
+            return redirect('accounts_overview')
+
+    ctx = _account_form_ctx(all_accounts, post=request.POST if errors else None)
+    ctx['errors'] = errors
+    return render(request, 'ledger/account_form.html', ctx)
+
+
+@login_required
+def account_edit(request, account_id):
+    acct = get_object_or_404(Account, pk=account_id)
+    all_accounts = list(Account.objects.order_by('account_type', 'name'))
+    errors = []
+
+    if request.method == 'POST':
+        errors = _save_account(request, acct)
+        if not errors:
+            messages.success(request, 'Account saved.')
+            return redirect('accounts_overview')
+
+    ctx = _account_form_ctx(all_accounts, instance=acct, post=request.POST if errors else None)
+    ctx['errors'] = errors
+    return render(request, 'ledger/account_form.html', ctx)
+
+
+def _save_account(request, acct):
+    errors = []
+    name = request.POST.get('name', '').strip()
+    if not name:
+        errors.append('Account name is required.')
+    parent_id = request.POST.get('parent', '').strip()
+    parent = None
+    if parent_id:
+        try:
+            parent = Account.objects.get(pk=parent_id)
+            if acct and parent.pk == acct.pk:
+                errors.append('An account cannot be its own parent.')
+        except Account.DoesNotExist:
+            errors.append('Selected parent account does not exist.')
+
+    account_type = request.POST.get('account_type', '').strip()
+    valid_types = [t[0] for t in Account.TYPE_CHOICES]
+    if account_type not in valid_types:
+        errors.append('Invalid account type.')
+
+    if errors:
+        return errors
+
+    commodity_namespace = request.POST.get('commodity_namespace', Account.NAMESPACE_CURRENCY)
+    commodity_mnemonic = request.POST.get('commodity_mnemonic', 'EUR').strip().upper() or 'EUR'
+    try:
+        smallest_fraction = int(request.POST.get('smallest_fraction', '100'))
+        if smallest_fraction not in [1, 10, 100, 1000]:
+            smallest_fraction = 100
+    except ValueError:
+        smallest_fraction = 100
+
+    if acct is None:
+        acct = Account()
+    acct.name = name
+    acct.code = request.POST.get('code', '').strip()
+    acct.account_type = account_type
+    acct.parent = parent
+    acct.commodity_namespace = commodity_namespace
+    acct.commodity_mnemonic = commodity_mnemonic
+    acct.smallest_fraction = smallest_fraction
+    acct.description = request.POST.get('description', '').strip()
+    acct.notes = request.POST.get('notes', '').strip()
+    acct.hidden = request.POST.get('hidden') == '1'
+    acct.placeholder = request.POST.get('placeholder') == '1'
+    acct.save()
+    return []
 
 
 # ---------------------------------------------------------------------------

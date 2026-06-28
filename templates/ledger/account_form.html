@@ -1,0 +1,171 @@
+{% extends 'ledger/base.html' %}
+{% block title %}{% if account %}Edit Account{% else %}New Account{% endif %} — WebCash{% endblock %}
+{% block tab_script %}
+window.CURRENT_TAB = {id:'accounts', label:'Accounts', url:'{% url "accounts_overview" %}', closeable:false};
+{% endblock %}
+{% block breadcrumb %}
+  <a href="{% url 'accounts_overview' %}" style="color:inherit;text-decoration:none;">Accounts</a>
+  &rsaquo; {% if account %}Edit: {{ account.name }}{% else %}New Account{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:680px">
+  <div class="card-title">{% if account %}Edit Account{% else %}New Account{% endif %}</div>
+
+  {% if errors %}
+  <div class="messages" style="margin-bottom:16px">
+    {% for e in errors %}<div class="message error">{{ e }}</div>{% endfor %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="">
+    {% csrf_token %}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px">
+
+      <!-- Account Name -->
+      <div class="form-group" style="grid-column:1/3">
+        <label for="id_name">Account Name <span style="color:var(--danger)">*</span></label>
+        <input type="text" id="id_name" name="name" required autofocus
+               value="{{ initial.name }}">
+      </div>
+
+      <!-- Account Code -->
+      <div class="form-group">
+        <label for="id_code">Account Code</label>
+        <input type="text" id="id_code" name="code"
+               value="{{ initial.code }}"
+               placeholder="e.g. 1010">
+      </div>
+
+      <!-- Account Type -->
+      <div class="form-group">
+        <label for="id_type">Account Type <span style="color:var(--danger)">*</span></label>
+        <select id="id_type" name="account_type" required>
+          <option value="">— select —</option>
+          {% for val, label in type_choices %}
+          <option value="{{ val }}" {% if initial.account_type == val %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Parent Account -->
+      <div class="form-group" style="grid-column:1/3">
+        <label for="id_parent">Parent Account</label>
+        <select id="id_parent" name="parent">
+          <option value="">— none (top-level) —</option>
+          {% for a in all_accounts %}
+          {% if not account or a.id != account.id %}
+          <option value="{{ a.id }}" {% if initial.parent_id == a.id|stringformat:"s" %}selected{% endif %}>
+            {{ a.full_path }}
+          </option>
+          {% endif %}
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Description -->
+      <div class="form-group" style="grid-column:1/3">
+        <label for="id_description">Description</label>
+        <input type="text" id="id_description" name="description"
+               value="{{ initial.description }}">
+      </div>
+
+    </div><!-- grid -->
+
+    <!-- Denomination section -->
+    <div style="border-top:1px solid var(--border);margin:8px 0 16px;padding-top:16px">
+      <div style="font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px">Commodity / Currency</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 24px">
+
+        <!-- Denomination -->
+        <div class="form-group">
+          <label for="id_namespace">Denomination</label>
+          <select id="id_namespace" name="commodity_namespace" onchange="onNamespaceChange(this.value)">
+            {% for val, label in namespace_choices %}
+            <option value="{{ val }}" {% if initial.commodity_namespace == val %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Currency dropdown -->
+        <div class="form-group" id="currency-field">
+          <label for="id_currency">Currency</label>
+          <select id="id_currency" name="commodity_mnemonic">
+            {% for code, label in currencies %}
+            <option value="{{ code }}" {% if initial.commodity_mnemonic == code %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <!-- Security ticker (shown only when denomination=SECURITY) -->
+        <div class="form-group" id="security-field" style="display:none">
+          <label for="id_security">Ticker / Symbol</label>
+          <input type="text" id="id_security" name="commodity_mnemonic_sec"
+                 value="{{ initial.commodity_mnemonic }}"
+                 placeholder="e.g. AAPL">
+        </div>
+
+        <!-- Smallest Fraction -->
+        <div class="form-group">
+          <label for="id_fraction">Smallest Fraction</label>
+          <select id="id_fraction" name="smallest_fraction">
+            {% for val, label in fraction_choices %}
+            <option value="{{ val }}" {% if initial.smallest_fraction == val|stringformat:"s" %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Flags -->
+    <div style="border-top:1px solid var(--border);margin:8px 0 16px;padding-top:16px">
+      <div style="font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:12px">Options</div>
+      <div style="display:flex;gap:32px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
+          <input type="checkbox" name="hidden" value="1" {% if initial.hidden %}checked{% endif %}>
+          Hidden
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
+          <input type="checkbox" name="placeholder" value="1" {% if initial.placeholder %}checked{% endif %}>
+          Placeholder (no transactions)
+        </label>
+      </div>
+    </div>
+
+    <!-- Notes -->
+    <div class="form-group">
+      <label for="id_notes">Notes</label>
+      <textarea id="id_notes" name="notes" rows="3"
+                style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:5px;font-size:.9rem;font-family:inherit;resize:vertical">{{ initial.notes }}</textarea>
+    </div>
+
+    <div style="display:flex;gap:12px;margin-top:8px">
+      <button type="submit" class="btn btn-primary">{% if account %}Save Changes{% else %}Create Account{% endif %}</button>
+      <a href="{% url 'accounts_overview' %}" class="btn" style="background:var(--border);color:var(--text)">Cancel</a>
+      {% if account %}
+      <a href="{% url 'account_register' account.id %}" class="btn" style="background:var(--border);color:var(--text);margin-left:auto">View Register</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<script>
+function onNamespaceChange(val) {
+  const isSec = val === 'SECURITY';
+  document.getElementById('currency-field').style.display = isSec ? 'none' : '';
+  document.getElementById('security-field').style.display = isSec ? '' : 'none';
+  const sec = document.getElementById('id_security');
+  const cur = document.getElementById('id_currency');
+  if (isSec) {
+    cur.name = '_commodity_mnemonic_disabled';
+    sec.name = 'commodity_mnemonic';
+  } else {
+    cur.name = 'commodity_mnemonic';
+    sec.name = 'commodity_mnemonic_sec';
+  }
+}
+(function(){ onNamespaceChange(document.getElementById('id_namespace').value); })();
+</script>
+{% endblock %}

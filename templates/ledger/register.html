@@ -1,6 +1,9 @@
 {% extends 'ledger/base.html' %}
 {% load ledger_tags %}
 {% block title %}{{ account.name }} — WebCash{% endblock %}
+{% block tab_script %}
+window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|escapejs }}', url:'{% url "account_register" account.id %}', closeable:true};
+{% endblock %}
 {% block breadcrumb %}
   <a href="{% url 'dashboard' %}" style="color:inherit;text-decoration:none;">Dashboard</a>
   &rsaquo; {{ account.full_path }}
@@ -94,7 +97,7 @@
       {% with s=row.split txn=row.txn %}
 
       {# ── Main row ── #}
-      <tr class="register-row" data-txn="{{ txn.id }}" style="cursor:pointer;">
+      <tr class="register-row {% if forloop.counter|divisibleby:2 %}row-even{% endif %}" data-txn="{{ txn.id }}" style="cursor:pointer;">
         <td data-col="0" style="text-align:center;color:var(--text-muted);font-size:.6rem;padding-right:0;">
           <span class="expand-icon">▶</span>
         </td>
@@ -102,13 +105,13 @@
         <td data-col="2">{{ txn.description|default:"—" }}</td>
         <td data-col="3" style="font-size:.82rem;color:var(--text-muted)">{{ row.other_label }}</td>
         <td data-col="4" style="font-size:.82rem;color:var(--text-muted)">{{ s.memo|default:"" }}</td>
-        <td data-col="5" class="amount {% if s.value_num > 0 %}positive{% endif %}"
-            data-sort="{% if s.value_num > 0 %}{{ s.value_num }}{% else %}0{% endif %}">
-          {% if s.value_num > 0 %}{{ s.value_num|amt:prefs }}{% endif %}
+        <td data-col="5" class="amount {% if row.display_amount > 0 %}positive{% endif %}"
+            data-sort="{% if row.display_amount > 0 %}{{ row.display_amount }}{% else %}0{% endif %}">
+          {% if row.display_amount > 0 %}{{ row.display_amount|amt:prefs }}{% endif %}
         </td>
-        <td data-col="6" class="amount {% if s.value_num < 0 %}negative{% endif %}"
-            data-sort="{% if s.value_num < 0 %}{{ s.value_num|floatformat:4|slice:'1:' }}{% else %}0{% endif %}">
-          {% if s.value_num < 0 %}{{ s.value_num|amt:prefs }}{% endif %}
+        <td data-col="6" class="amount {% if row.display_amount < 0 %}negative{% endif %}"
+            data-sort="{% if row.display_amount < 0 %}{{ row.display_amount|floatformat:6|slice:'1:' }}{% else %}0{% endif %}">
+          {% if row.display_amount < 0 %}{{ row.display_amount|amt:prefs }}{% endif %}
         </td>
         <td data-col="7" class="amount {% if row.running >= 0 %}positive{% else %}negative{% endif %}"
             data-sort="{{ row.running }}">
@@ -146,10 +149,20 @@
                   </td>
                   <td style="color:var(--text-muted);font-size:.82rem;">{{ sp.memo|default:"" }}</td>
                   <td class="amount {% if sp.value_num > 0 %}positive{% endif %}">
-                    {% if sp.value_num > 0 %}{{ sp.value_num|amt:prefs }}{% endif %}
+                    {% if sp.value_num > 0 %}
+                      {{ sp.display_amount|amt:prefs }}
+                      {% if sp.quantity_num is not None and sp.account.commodity_mnemonic != account.commodity_mnemonic %}
+                        <span style="font-size:.72rem;opacity:.6">{{ sp.account.commodity_mnemonic }}</span>
+                      {% endif %}
+                    {% endif %}
                   </td>
                   <td class="amount {% if sp.value_num < 0 %}negative{% endif %}">
-                    {% if sp.value_num < 0 %}{{ sp.value_num|amt:prefs }}{% endif %}
+                    {% if sp.value_num < 0 %}
+                      {{ sp.display_amount|amt:prefs }}
+                      {% if sp.quantity_num is not None and sp.account.commodity_mnemonic != account.commodity_mnemonic %}
+                        <span style="font-size:.72rem;opacity:.6">{{ sp.account.commodity_mnemonic }}</span>
+                      {% endif %}
+                    {% endif %}
                   </td>
                 </tr>
                 {% endfor %}

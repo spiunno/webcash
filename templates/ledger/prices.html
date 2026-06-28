@@ -1,0 +1,107 @@
+{% extends 'ledger/base.html' %}
+{% block title %}Price Database — WebCash{% endblock %}
+{% block tab_script %}
+window.CURRENT_TAB = {id:'prices', label:'Prices', url:'{% url "price_list" %}', closeable:true};
+{% endblock %}
+{% block breadcrumb %}Price Database{% endblock %}
+
+{% block content %}
+<div class="card" style="margin-bottom:16px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+    <div>
+      <div style="font-weight:700;font-size:.95rem;">Exchange Rate &amp; Price Database</div>
+      <div style="font-size:.8rem;color:var(--text-muted);margin-top:3px;">
+        Currency rates from the
+        <a href="https://www.ecb.europa.eu" target="_blank" style="color:var(--accent)">European Central Bank</a>
+        via <a href="https://www.frankfurter.app" target="_blank" style="color:var(--accent)">frankfurter.app</a>.
+        Security prices (stocks, funds) must be entered manually.
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <label style="font-size:.82rem;color:var(--text-muted);">Base</label>
+      <select id="base-sel" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:.84rem;">
+        <option value="EUR">EUR</option>
+        <option value="USD">USD</option>
+        <option value="GBP">GBP</option>
+        <option value="CHF">CHF</option>
+      </select>
+      <select id="days-sel" style="padding:5px 8px;border:1px solid var(--border);border-radius:4px;font-size:.84rem;">
+        <option value="30">Last 30 days</option>
+        <option value="90" selected>Last 90 days</option>
+        <option value="365">Last year</option>
+      </select>
+      <button id="update-btn" class="btn btn-primary" style="padding:6px 16px;font-size:.84rem;">
+        ↻ Update Rates
+      </button>
+      <span id="update-status" style="font-size:.8rem;"></span>
+    </div>
+  </div>
+</div>
+
+<div class="card" style="padding:0;overflow:hidden;">
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Commodity</th>
+        <th>Priced in</th>
+        <th>Latest Date</th>
+        <th class="amount">Rate</th>
+        <th style="font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted)">Source</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in rows %}
+      <tr>
+        <td style="font-weight:600;">{{ p.commodity_mnemonic }}</td>
+        <td>{{ p.currency }}</td>
+        <td style="white-space:nowrap;color:var(--text-muted);font-size:.85rem;">{{ p.date }}</td>
+        <td class="amount" style="font-variant-numeric:tabular-nums;">
+          1 {{ p.commodity_mnemonic }} = {{ p.value_num }} {{ p.currency }}
+        </td>
+        <td style="font-size:.8rem;color:var(--text-muted);">{{ p.source }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div style="padding:24px;color:var(--text-muted);font-size:.9rem;">
+    No price data yet. Click <strong>↻ Update Rates</strong> to download from the ECB.
+  </div>
+  {% endif %}
+</div>
+
+<script>
+document.getElementById('update-btn').addEventListener('click', async function () {
+  const btn = this;
+  const status = document.getElementById('update-status');
+  const base = document.getElementById('base-sel').value;
+  const days = document.getElementById('days-sel').value;
+  btn.disabled = true;
+  btn.textContent = '↻ Downloading…';
+  status.textContent = '';
+  status.style.color = 'var(--text-muted)';
+  try {
+    const form = new FormData();
+    form.append('base', base);
+    form.append('days', days);
+    form.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    const res = await fetch('{% url "update_prices_ajax" %}', { method: 'POST', body: form });
+    const data = await res.json();
+    if (data.error) {
+      status.textContent = 'Error: ' + data.error;
+      status.style.color = 'var(--danger)';
+    } else {
+      status.textContent = '✓ ' + data.message;
+      status.style.color = 'var(--success)';
+      setTimeout(() => location.reload(), 1800);
+    }
+  } catch (e) {
+    status.textContent = 'Network error: ' + e.message;
+    status.style.color = 'var(--danger)';
+  }
+  btn.disabled = false;
+  btn.textContent = '↻ Update Rates';
+});
+</script>
+{% endblock %}

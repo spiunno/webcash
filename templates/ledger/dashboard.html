@@ -1,6 +1,9 @@
 {% extends 'ledger/base.html' %}
 {% load ledger_tags %}
 {% block title %}Dashboard — WebCash{% endblock %}
+{% block tab_script %}
+window.CURRENT_TAB = {id:'dashboard', label:'Dashboard', url:'{% url "dashboard" %}', closeable:true};
+{% endblock %}
 {% block breadcrumb %}Dashboard{% endblock %}
 
 {% block content %}

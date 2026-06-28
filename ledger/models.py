@@ -4,30 +4,83 @@ from django.db import models
 from django.contrib.auth.models import User
 
 
+CURRENCIES = [
+    ('AED', 'AED – UAE Dirham'), ('AUD', 'AUD – Australian Dollar'),
+    ('BRL', 'BRL – Brazilian Real'), ('CAD', 'CAD – Canadian Dollar'),
+    ('CHF', 'CHF – Swiss Franc'), ('CNY', 'CNY – Chinese Yuan'),
+    ('CZK', 'CZK – Czech Koruna'), ('DKK', 'DKK – Danish Krone'),
+    ('EUR', 'EUR – Euro'), ('GBP', 'GBP – British Pound'),
+    ('HKD', 'HKD – Hong Kong Dollar'), ('HUF', 'HUF – Hungarian Forint'),
+    ('IDR', 'IDR – Indonesian Rupiah'), ('ILS', 'ILS – Israeli Shekel'),
+    ('INR', 'INR – Indian Rupee'), ('JPY', 'JPY – Japanese Yen'),
+    ('KRW', 'KRW – South Korean Won'), ('MXN', 'MXN – Mexican Peso'),
+    ('MYR', 'MYR – Malaysian Ringgit'), ('NOK', 'NOK – Norwegian Krone'),
+    ('NZD', 'NZD – New Zealand Dollar'), ('PHP', 'PHP – Philippine Peso'),
+    ('PLN', 'PLN – Polish Zloty'), ('RON', 'RON – Romanian Leu'),
+    ('RUB', 'RUB – Russian Ruble'), ('SAR', 'SAR – Saudi Riyal'),
+    ('SEK', 'SEK – Swedish Krona'), ('SGD', 'SGD – Singapore Dollar'),
+    ('THB', 'THB – Thai Baht'), ('TRY', 'TRY – Turkish Lira'),
+    ('TWD', 'TWD – Taiwan Dollar'), ('USD', 'USD – US Dollar'),
+    ('ZAR', 'ZAR – South African Rand'),
+]
+
+
 class Account(models.Model):
     ASSET = 'ASSET'
+    BANK = 'BANK'
+    CASH = 'CASH'
+    RECEIVABLE = 'RECEIVABLE'
+    STOCK = 'STOCK'
+    MUTUAL = 'MUTUAL'
     LIABILITY = 'LIABILITY'
+    CREDIT = 'CREDIT'
+    PAYABLE = 'PAYABLE'
     INCOME = 'INCOME'
     EXPENSE = 'EXPENSE'
     EQUITY = 'EQUITY'
 
     TYPE_CHOICES = [
-        (ASSET, 'Asset'),
-        (LIABILITY, 'Liability'),
-        (INCOME, 'Income'),
-        (EXPENSE, 'Expense'),
-        (EQUITY, 'Equity'),
+        (ASSET,      'Asset'),
+        (BANK,       'Bank'),
+        (CASH,       'Cash'),
+        (RECEIVABLE, 'Receivable'),
+        (STOCK,      'Stock'),
+        (MUTUAL,     'Fund'),
+        (EQUITY,     'Equity'),
+        (INCOME,     'Income'),
+        (LIABILITY,  'Liability'),
+        (CREDIT,     'Credit Card'),
+        (PAYABLE,    'Payable'),
+        (EXPENSE,    'Expense'),
+    ]
+
+    NAMESPACE_CURRENCY = 'CURRENCY'
+    NAMESPACE_SECURITY = 'SECURITY'
+    NAMESPACE_CHOICES = [
+        (NAMESPACE_CURRENCY, 'Currency'),
+        (NAMESPACE_SECURITY, 'Security'),
+    ]
+
+    FRACTION_CHOICES = [
+        (1,    '1  (whole units)'),
+        (10,   '1/10'),
+        (100,  '1/100  (cents)'),
+        (1000, '1/1000  (mils)'),
     ]
 
     # GnuCash uses GUIDs for account ids; we mirror that for clean imports
     guid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     name = models.CharField(max_length=255)
+    code = models.CharField(max_length=32, blank=True)
     account_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
-    commodity_mnemonic = models.CharField(max_length=10, default='USD')
+    commodity_namespace = models.CharField(max_length=20, choices=NAMESPACE_CHOICES, default=NAMESPACE_CURRENCY)
+    commodity_mnemonic = models.CharField(max_length=10, default='EUR')
+    smallest_fraction = models.IntegerField(default=100)
     parent = models.ForeignKey(
         'self', null=True, blank=True, on_delete=models.SET_NULL, related_name='children'
     )
     description = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
     placeholder = models.BooleanField(default=False)
     hidden = models.BooleanField(default=False)
 
@@ -44,11 +97,15 @@ class Account(models.Model):
 
     @property
     def normal_balance(self):
-        """Debit-positive types: ASSET, EXPENSE. Credit-positive: LIABILITY, INCOME, EQUITY."""
-        return 1 if self.account_type in (self.ASSET, self.EXPENSE) else -1
+        """Debit-positive: asset-family + expenses. Credit-positive: liability-family + income + equity."""
+        debit_types = {self.ASSET, self.BANK, self.CASH, self.RECEIVABLE, self.STOCK, self.MUTUAL, self.EXPENSE}
+        return 1 if self.account_type in debit_types else -1
 
     def balance(self):
-        total = self.splits.aggregate(s=models.Sum('value_num'))['s'] or Decimal('0')
+        from django.db.models.functions import Coalesce
+        total = self.splits.aggregate(
+            s=models.Sum(Coalesce('quantity_num', 'value_num'))
+        )['s'] or Decimal('0')
         return total * self.normal_balance
 
 
@@ -76,8 +133,10 @@ class Split(models.Model):
     transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE, related_name='splits')
     account = models.ForeignKey(Account, on_delete=models.PROTECT, related_name='splits')
     memo = models.CharField(max_length=2048, blank=True)
-    # Positive value = debit; stored as exact Decimal to avoid float rounding
+    # value_num: amount in the transaction's base currency (sums to 0 across all splits)
     value_num = models.DecimalField(max_digits=18, decimal_places=4)
+    # quantity_num: amount in the account's native commodity (None = same as value_num)
+    quantity_num = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     reconciled = models.BooleanField(default=False)
     reconcile_date = models.DateField(null=True, blank=True)
 
@@ -86,6 +145,29 @@ class Split(models.Model):
 
     def __str__(self):
         return f'{self.account.name} {self.value_num}'
+
+    @property
+    def display_amount(self):
+        """Amount to show in the account's register (native commodity)."""
+        return self.quantity_num if self.quantity_num is not None else self.value_num
+
+
+class Price(models.Model):
+    """Exchange rate or security price: 1 unit of commodity_mnemonic = value_num units of currency."""
+    commodity_namespace = models.CharField(max_length=20, default='CURRENCY')
+    commodity_mnemonic = models.CharField(max_length=20)
+    currency = models.CharField(max_length=10)
+    date = models.DateField()
+    value_num = models.DecimalField(max_digits=18, decimal_places=6)
+    source = models.CharField(max_length=20, default='automatic')  # 'automatic' or 'user'
+
+    class Meta:
+        unique_together = [('commodity_mnemonic', 'currency', 'date')]
+        ordering = ['-date']
+        indexes = [models.Index(fields=['commodity_mnemonic', 'currency', 'date'])]
+
+    def __str__(self):
+        return f'{self.date} {self.commodity_mnemonic}/{self.currency} = {self.value_num}'
 
 
 class UserPreferences(models.Model):
@@ -141,3 +223,27 @@ class UserPreferences(models.Model):
         if self.currency_before:
             return f'{self.currency_symbol}{formatted}'
         return f'{formatted} {self.currency_symbol}'
+
+
+def get_price(commodity_mnemonic, target_currency, on_date=None):
+    """Return price of 1 unit of commodity_mnemonic in target_currency on or before on_date.
+
+    Tries a direct lookup first (e.g. EUR→USD), then an inverse (USD→EUR → 1/rate).
+    Returns Decimal or None.
+    """
+    from datetime import date as date_type
+    d = on_date or date_type.today()
+    if commodity_mnemonic == target_currency:
+        return Decimal('1')
+    p = Price.objects.filter(
+        commodity_mnemonic=commodity_mnemonic, currency=target_currency, date__lte=d
+    ).order_by('-date').first()
+    if p:
+        return p.value_num
+    # Inverse lookup
+    p = Price.objects.filter(
+        commodity_mnemonic=target_currency, currency=commodity_mnemonic, date__lte=d
+    ).order_by('-date').first()
+    if p and p.value_num:
+        return Decimal('1') / p.value_num
+    return None

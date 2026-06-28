@@ -80,6 +80,23 @@
                           border:1px solid var(--border);border-radius:4px;">
           </td>
         </tr>
+        {# ── Cross-currency exchange rate row (shown only when currencies differ) ── #}
+        <tr id="new-rate-row" style="display:none;">
+          <td colspan="4" style="padding:6px 6px 2px;">
+            <div style="display:flex;align-items:center;gap:8px;font-size:.81rem;
+                        background:#f0f8f0;border:1px solid var(--border);border-radius:4px;padding:6px 10px;">
+              <span style="color:var(--text-muted);">Exchange rate:</span>
+              <span style="font-weight:600;" id="new-rate-from-ccy"></span>
+              <span style="color:var(--text-muted);">=</span>
+              <input type="text" id="new-rate-value" placeholder="rate"
+                     style="width:100px;padding:3px 6px;font-size:.81rem;text-align:right;
+                            border:1px solid var(--border);border-radius:3px;">
+              <span style="font-weight:600;" id="new-rate-to-ccy"></span>
+              <span id="new-rate-computed" style="margin-left:4px;color:var(--success);font-weight:600;"></span>
+              <input type="hidden" name="to_quantity" id="new-to-quantity">
+            </div>
+          </td>
+        </tr>
       </tbody>
     </table>
   </div>
@@ -132,10 +149,10 @@
 
 {# Render all_accounts as JSON for JS cloning #}
 <script id="new-accounts-json" type="application/json">
-[{% for acc in all_accounts %}{"id":{{ acc.id }},"name":"{{ acc.full_path|escapejs }}"}{% if not forloop.last %},{% endif %}{% endfor %}]
+[{% for acc in all_accounts %}{"id":{{ acc.id }},"name":"{{ acc.full_path|escapejs }}","ccy":"{{ acc.commodity_mnemonic }}"}{% if not forloop.last %},{% endif %}{% endfor %}]
 </script>
 <script id="new-current-account-json" type="application/json">
-{"id":{{ account.id }},"name":"{{ account.name|escapejs }}"}
+{"id":{{ account.id }},"name":"{{ account.name|escapejs }}","ccy":"{{ account.commodity_mnemonic }}"}
 </script>
 <script>
 (function(){
@@ -172,6 +189,69 @@
   displayIn.addEventListener('focus', () => { displayIn.style.borderColor = ''; });
   // Initialise display
   displayIn.value = isoIn.value;
+
+  // ── Exchange rate (cross-currency) ───────────────────────────────────
+  const acctMap = {};
+  // accounts array is declared below; wire up after it's set
+  function initExchangeRate() {
+    const rateRow      = document.getElementById('new-rate-row');
+    const rateFromCcy  = document.getElementById('new-rate-from-ccy');
+    const rateToCcy    = document.getElementById('new-rate-to-ccy');
+    const rateInput    = document.getElementById('new-rate-value');
+    const rateComputed = document.getElementById('new-rate-computed');
+    const toQtyHidden  = document.getElementById('new-to-quantity');
+    const toSel        = document.getElementById('new-to-account');
+    const debitIn      = document.getElementById('new-debit');
+    const creditIn     = document.getElementById('new-credit');
+
+    function computeConverted() {
+      const toAcc = acctMap[toSel.value];
+      if (!toAcc || toAcc.ccy === curAcc.ccy) return;
+      const debit  = parseFloat(debitIn.value.replace(',', '.'))  || 0;
+      const credit = parseFloat(creditIn.value.replace(',', '.')) || 0;
+      const amount = debit - credit;
+      const rate   = parseFloat(rateInput.value.replace(',', '.')) || 0;
+      if (rate && amount !== 0) {
+        const converted = (-amount * rate).toFixed(2);
+        rateComputed.textContent = `→ ${converted} ${toAcc.ccy}`;
+        toQtyHidden.value = converted;
+      } else {
+        rateComputed.textContent = '';
+        toQtyHidden.value = '';
+      }
+    }
+
+    async function onToAccountChange() {
+      const toAcc = acctMap[toSel.value];
+      if (!toAcc || toAcc.ccy === curAcc.ccy) {
+        rateRow.style.display = 'none';
+        toQtyHidden.value = '';
+        return;
+      }
+      rateFromCcy.textContent = '1 ' + curAcc.ccy;
+      rateToCcy.textContent   = toAcc.ccy;
+      rateRow.style.display = '';
+      const dateVal = document.getElementById('new-date-iso').value || new Date().toISOString().slice(0, 10);
+      try {
+        const res  = await fetch(`/api/exchange-rate/?from=${curAcc.ccy}&to=${toAcc.ccy}&date=${encodeURIComponent(dateVal)}`);
+        const data = await res.json();
+        if (data.rate) {
+          rateInput.value = parseFloat(data.rate).toFixed(4);
+          computeConverted();
+        } else {
+          rateInput.value = '';
+          rateComputed.textContent = '(no rate — enter manually)';
+        }
+      } catch (_) {
+        rateInput.value = '';
+      }
+    }
+
+    toSel.addEventListener('change', onToAccountChange);
+    rateInput.addEventListener('input', computeConverted);
+    debitIn.addEventListener('input',  computeConverted);
+    creditIn.addEventListener('input', computeConverted);
+  }
 
   // ── Autocomplete ──────────────────────────────────────────────────────
   let acTimer = null;
@@ -219,6 +299,8 @@
   // ── Multi-split toggle ────────────────────────────────────────────────
   const accounts = JSON.parse(document.getElementById('new-accounts-json').textContent);
   const curAcc   = JSON.parse(document.getElementById('new-current-account-json').textContent);
+  accounts.forEach(a => acctMap[a.id] = a);
+  initExchangeRate();
 
   function accountOptions(selectedId) {
     return accounts.map(a =>

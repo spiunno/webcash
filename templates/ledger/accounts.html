@@ -1,0 +1,116 @@
+{% extends 'ledger/base.html' %}
+{% load ledger_tags %}
+{% block title %}Accounts — WebCash{% endblock %}
+{% block breadcrumb %}Accounts{% endblock %}
+
+{% block tab_script %}
+window.CURRENT_TAB = {id:'accounts', label:'Accounts', url:'{% url "accounts_overview" %}', closeable:false};
+{% endblock %}
+
+{% block content %}
+<style>
+  .acc-row:hover .acc-edit-btn { opacity: 1 !important; }
+</style>
+<div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+  <a href="{% url 'account_new' %}" class="btn btn-primary">+ New Account</a>
+</div>
+<div class="card" style="padding:0;overflow:hidden;">
+  <table id="accounts-table">
+    <thead>
+      <tr>
+        <th style="width:40%;">Account Name</th>
+        <th>Type</th>
+        <th>Description</th>
+        <th class="amount">Balance</th>
+        <th style="width:50px"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in flat %}
+      {% with acc=row.account %}
+      <tr class="acc-row"
+          data-id="{{ acc.id }}"
+          data-parent="{{ acc.parent_id|default:'' }}"
+          data-depth="{{ row.depth }}"
+          data-has-children="{% if row.has_children %}true{% else %}false{% endif %}"
+          style="{% if row.depth >= 2 %}display:none;{% endif %}">
+        <td>
+          <div style="display:flex;align-items:center;padding-left:{{ row.depth }}em;">
+            {% if row.has_children %}
+            <span class="acc-toggle" style="cursor:pointer;font-size:.55rem;color:var(--text-muted);
+                  width:14px;flex-shrink:0;transition:transform .15s;display:inline-block;
+                  {% if row.depth < 1 %}transform:rotate(90deg);{% endif %}">▶</span>
+            {% else %}
+            <span style="width:14px;display:inline-block;flex-shrink:0;"></span>
+            {% endif %}
+            <a href="{% url 'account_register' acc.id %}"
+               style="color:var(--text);text-decoration:none;font-size:.88rem;
+                      {% if row.depth == 0 %}font-weight:700;{% elif row.depth == 1 %}font-weight:600;{% endif %}"
+               class="acc-name-link">{{ acc.name }}</a>
+          </div>
+        </td>
+        <td style="font-size:.78rem;color:var(--text-muted);">{{ acc.get_account_type_display }}</td>
+        <td style="font-size:.82rem;color:var(--text-muted);">{{ acc.description|truncatechars:60 }}</td>
+        <td class="amount" style="{% if acc.cum_balance >= 0 %}color:var(--success);{% else %}color:var(--danger);{% endif %}
+              {% if row.depth == 0 %}font-weight:700;{% endif %}">
+          {% if not acc.placeholder %}{{ acc.cum_balance|amt:prefs }}{% endif %}
+        </td>
+        <td style="width:50px;padding:4px 8px;text-align:right;">
+          <a href="{% url 'account_edit' acc.id %}" style="font-size:.75rem;color:var(--text-muted);text-decoration:none;opacity:0;" class="acc-edit-btn">Edit</a>
+        </td>
+      </tr>
+      {% endwith %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+(function(){
+  const rows = Array.from(document.querySelectorAll('.acc-row'));
+  const byId = {};
+  rows.forEach(r => { byId[r.dataset.id] = r; });
+
+  // collapsed = set of account IDs whose CHILDREN are hidden
+  const collapsed = new Set();
+  rows.forEach(r => {
+    const depth = parseInt(r.dataset.depth);
+    if (r.dataset.hasChildren === 'true' && depth >= 1) collapsed.add(r.dataset.id);
+  });
+
+  function isHidden(row) {
+    let parentId = row.dataset.parent;
+    while (parentId) {
+      if (collapsed.has(parentId)) return true;
+      const pr = byId[parentId];
+      parentId = pr ? pr.dataset.parent : '';
+    }
+    return false;
+  }
+
+  function refresh() {
+    rows.forEach(r => {
+      r.style.display = isHidden(r) ? 'none' : '';
+      const toggle = r.querySelector('.acc-toggle');
+      if (toggle) {
+        toggle.style.transform = collapsed.has(r.dataset.id) ? '' : 'rotate(90deg)';
+      }
+    });
+  }
+
+  rows.forEach(r => {
+    const toggle = r.querySelector('.acc-toggle');
+    if (toggle) {
+      toggle.addEventListener('click', e => {
+        e.preventDefault();
+        const id = r.dataset.id;
+        if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+        refresh();
+      });
+    }
+  });
+
+  refresh();
+})();
+</script>
+{% endblock %}

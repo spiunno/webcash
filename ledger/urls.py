@@ -11,4 +11,10 @@ urlpatterns = [
     path('transaction/<int:txn_id>/edit/', views.transaction_edit, name='transaction_edit'),
     path('account/<int:account_id>/new/', views.transaction_new, name='transaction_new'),
     path('account/<int:account_id>/autocomplete/', views.transaction_autocomplete, name='transaction_autocomplete'),
+    path('accounts/', views.accounts_overview, name='accounts_overview'),
+    path('prices/', views.price_list, name='price_list'),
+    path('prices/update/', views.update_prices_ajax, name='update_prices_ajax'),
+    path('api/exchange-rate/', views.exchange_rate_api, name='exchange_rate_api'),
+    path('accounts/new/', views.account_new, name='account_new'),
+    path('accounts/<int:account_id>/edit/', views.account_edit, name='account_edit'),
 ]

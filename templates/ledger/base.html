@@ -1,12 +1,16 @@
 {% load static %}
 <!DOCTYPE html>
 <html lang="{{ prefs.language|default:'en' }}"
-      style="--accent:{{ prefs.accent_color|default:'#4a9238' }};--sidebar-active:{{ prefs.accent_color|default:'#4a9238' }};">
+      style="--accent:{{ prefs.accent_color|default:'#4a9238' }};">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}WebCash{% endblock %}</title>
-  <link rel="stylesheet" href="{% static 'ledger/app.css' %}?v=2">
+  <link rel="stylesheet" href="{% static 'ledger/app.css' %}?v=3">
+  {# Each page declares its tab identity here, before the tab-bar script #}
+  <script>{% block tab_script %}
+    window.CURRENT_TAB = {id:'accounts', label:'Accounts', url:'{% url "accounts_overview" %}', closeable:false};
+  {% endblock %}</script>
 </head>
 <body>
 {% if user.is_authenticated %}
@@ -14,7 +18,6 @@
 <!-- ===== TOP MENU BAR ===== -->
 <header class="topnav">
   <div class="topnav-brand">💰 WebCash</div>
-
   <nav class="topnav-menus" id="topnav-menus">
 
     <div class="menu-item" data-menu="file">
@@ -31,7 +34,7 @@
       <button class="menu-btn">Edit</button>
       <div class="menu-dropdown">
         <div class="menu-label">Accounts</div>
-        <a href="/admin/ledger/account/add/">New Account</a>
+        <a href="{% url 'account_new' %}">New Account</a>
         <div class="menu-sep"></div>
         <div class="menu-label">Transactions</div>
         <a href="/admin/ledger/transaction/add/">New Transaction</a>
@@ -43,6 +46,8 @@
       <button class="menu-btn">Reports</button>
       <div class="menu-dropdown">
         <a href="{% url 'dashboard' %}">Summary Dashboard</a>
+        <div class="menu-sep"></div>
+        <a href="{% url 'price_list' %}">Price Database</a>
       </div>
     </div>
 
@@ -56,64 +61,138 @@
     </div>
 
   </nav>
-
-  <div class="topnav-right">
-    {{ user.get_full_name|default:user.username }}
-  </div>
+  <div class="topnav-right">{{ user.get_full_name|default:user.username }}</div>
 </header>
 
-<!-- ===== SIDEBAR + MAIN ===== -->
-<div class="layout">
-  <aside class="sidebar">
-    <nav class="sidebar-nav">
-      <div class="nav-section-title">Overview</div>
-      <a class="nav-link {% if request.resolver_match.url_name == 'dashboard' %}active{% endif %}" href="{% url 'dashboard' %}">Dashboard</a>
+<!-- ===== TAB BAR ===== -->
+<div id="tab-bar" class="tabbar"></div>
 
-      {% for root in account_tree %}
-        {% include 'ledger/_account_node.html' with account=root depth=0 %}
-      {% endfor %}
-    </nav>
-  </aside>
-
-  <div class="main">
-    <div class="topbar">{% block breadcrumb %}Home{% endblock %}</div>
-    <div class="content">
-      {% if messages %}
-        <div class="messages">
-          {% for msg in messages %}
-            <div class="message {{ msg.tags }}">{{ msg }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-      {% block content %}{% endblock %}
-    </div>
+<!-- ===== MAIN CONTENT ===== -->
+<div class="main">
+  <div class="topbar">{% block breadcrumb %}Home{% endblock %}</div>
+  <div class="content">
+    {% if messages %}
+      <div class="messages">
+        {% for msg in messages %}
+          <div class="message {{ msg.tags }}">{{ msg }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
   </div>
 </div>
 
 <script>
-  // Click-to-open dropdown menus; close on outside click
-  (function () {
-    const items = document.querySelectorAll('.menu-item');
-
-    items.forEach(item => {
-      item.querySelector('.menu-btn').addEventListener('click', e => {
-        const isOpen = item.classList.contains('open');
-        // close all
-        items.forEach(i => i.classList.remove('open'));
-        if (!isOpen) item.classList.add('open');
-        e.stopPropagation();
-      });
-    });
-
-    document.addEventListener('click', () => {
+/* ── Top menu dropdowns ────────────────────────────────────── */
+(function () {
+  const items = document.querySelectorAll('.menu-item');
+  items.forEach(item => {
+    item.querySelector('.menu-btn').addEventListener('click', e => {
+      const isOpen = item.classList.contains('open');
       items.forEach(i => i.classList.remove('open'));
+      if (!isOpen) item.classList.add('open');
+      e.stopPropagation();
     });
+  });
+  document.addEventListener('click', () => items.forEach(i => i.classList.remove('open')));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') items.forEach(i => i.classList.remove('open')); });
+})();
 
-    // Close on Escape
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') items.forEach(i => i.classList.remove('open'));
+/* ── Tab bar ────────────────────────────────────────────────── */
+(function () {
+  const STORAGE_KEY = 'webcash_tabs_v2';
+  const ACCOUNTS_TAB = {id: 'accounts', label: 'Accounts', url: '/accounts/', closeable: false};
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [ACCOUNTS_TAB]; }
+    catch { return [ACCOUNTS_TAB]; }
+  }
+  function save(tabs) { localStorage.setItem(STORAGE_KEY, JSON.stringify(tabs)); }
+
+  const cur = window.CURRENT_TAB;
+  let tabs = load();
+
+  // Ensure Accounts tab always exists and is first
+  if (!tabs.find(t => t.id === 'accounts')) tabs.unshift(ACCOUNTS_TAB);
+
+  // Add or update current page's tab
+  if (cur && cur.id) {
+    const ex = tabs.find(t => t.id === cur.id);
+    if (ex) { ex.label = cur.label; ex.url = cur.url; }
+    else tabs.push({id: cur.id, label: cur.label, url: cur.url, closeable: cur.closeable !== false});
+  }
+  save(tabs);
+
+  const activeId = cur ? cur.id : '';
+  const bar = document.getElementById('tab-bar');
+  let dragSrcIdx = null;
+
+  function render() {
+    const t = load();
+    bar.innerHTML = '';
+    t.forEach((tab, i) => {
+      const el = document.createElement('div');
+      el.className = 'tab' + (tab.id === activeId ? ' tab-active' : '');
+      el.draggable = true;
+      el.dataset.idx = i;
+
+      const a = document.createElement('a');
+      a.href = tab.url;
+      a.className = 'tab-label';
+      a.textContent = tab.label;
+      if (tab.id === activeId) a.addEventListener('click', e => e.preventDefault());
+      el.appendChild(a);
+
+      if (tab.closeable !== false) {
+        const x = document.createElement('button');
+        x.className = 'tab-close';
+        x.innerHTML = '&#215;';
+        x.title = 'Close';
+        x.addEventListener('click', e => {
+          e.preventDefault(); e.stopPropagation();
+          let ts = load();
+          const idx = ts.findIndex(t2 => t2.id === tab.id);
+          if (idx === -1) return;
+          ts.splice(idx, 1);
+          save(ts);
+          if (tab.id === activeId) {
+            const next = ts[Math.max(0, idx - 1)] || ts[0];
+            if (next) window.location.href = next.url;
+          } else { render(); }
+        });
+        el.appendChild(x);
+      }
+
+      // Drag to reorder
+      el.addEventListener('dragstart', e => {
+        dragSrcIdx = i;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', i);
+        el.classList.add('dragging');
+      });
+      el.addEventListener('dragend', () => el.classList.remove('dragging'));
+      el.addEventListener('dragover', e => { e.preventDefault(); el.classList.add('drag-over'); });
+      el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+      el.addEventListener('drop', e => {
+        e.preventDefault(); el.classList.remove('drag-over');
+        if (dragSrcIdx === null || dragSrcIdx === i) return;
+        let ts = load();
+        const [moved] = ts.splice(dragSrcIdx, 1);
+        ts.splice(i, 0, moved);
+        // Keep Accounts tab first if it was first
+        if (ts[0].id !== 'accounts' && moved.id !== 'accounts') {
+          const ai = ts.findIndex(t2 => t2.id === 'accounts');
+          if (ai > 0) { const [a] = ts.splice(ai, 1); ts.unshift(a); }
+        }
+        save(ts); dragSrcIdx = null; render();
+      });
+
+      bar.appendChild(el);
     });
-  })();
+  }
+
+  render();
+})();
 </script>
 
 {% else %}
