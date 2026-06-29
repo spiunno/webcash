@@ -24,14 +24,20 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
         <div style="font-size:.75rem;color:#7f8fa4;text-transform:uppercase;letter-spacing:.05em;">Balance</div>
         <div style="font-size:1.5rem;font-weight:700;
           color:{% if account.balance >= 0 %}var(--success){% else %}var(--danger){% endif %}">
-          {{ account.balance|amt:prefs }}
+          {{ account.balance|num:account_prefs }} <span style="font-size:.9rem;opacity:.7;">{{ account.commodity_mnemonic }}</span>
         </div>
       </div>
-      <button id="new-txn-btn" class="btn btn-primary"
-              style="white-space:nowrap;"
-              data-url="{% url 'transaction_new' account.id %}?partial=1">
-        + New Transaction
-      </button>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <a href="{% url 'account_edit' account.id %}"
+           class="btn" style="padding:6px 14px;font-size:.82rem;background:var(--border);color:var(--text);">
+          Edit Account
+        </a>
+        <button id="new-txn-btn" class="btn btn-primary"
+                style="white-space:nowrap;"
+                data-url="{% url 'transaction_new' account.id %}?partial=1">
+          + New Transaction
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -107,15 +113,15 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
         <td data-col="4" style="font-size:.82rem;color:var(--text-muted)">{{ s.memo|default:"" }}</td>
         <td data-col="5" class="amount {% if row.display_amount > 0 %}positive{% endif %}"
             data-sort="{% if row.display_amount > 0 %}{{ row.display_amount }}{% else %}0{% endif %}">
-          {% if row.display_amount > 0 %}{{ row.display_amount|amt:prefs }}{% endif %}
+          {% if row.display_amount > 0 %}{{ row.display_amount|num:account_prefs }} <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>{% endif %}
         </td>
         <td data-col="6" class="amount {% if row.display_amount < 0 %}negative{% endif %}"
             data-sort="{% if row.display_amount < 0 %}{{ row.display_amount|floatformat:6|slice:'1:' }}{% else %}0{% endif %}">
-          {% if row.display_amount < 0 %}{{ row.display_amount|amt:prefs }}{% endif %}
+          {% if row.display_amount < 0 %}{{ row.display_amount|num:account_prefs }} <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>{% endif %}
         </td>
         <td data-col="7" class="amount {% if row.running >= 0 %}positive{% else %}negative{% endif %}"
             data-sort="{{ row.running }}">
-          {{ row.running|amt:prefs }}
+          {{ row.running|num:account_prefs }} <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>
         </td>
       </tr>
 
@@ -150,18 +156,14 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
                   <td style="color:var(--text-muted);font-size:.82rem;">{{ sp.memo|default:"" }}</td>
                   <td class="amount {% if sp.value_num > 0 %}positive{% endif %}">
                     {% if sp.value_num > 0 %}
-                      {{ sp.display_amount|amt:prefs }}
-                      {% if sp.quantity_num is not None and sp.account.commodity_mnemonic != account.commodity_mnemonic %}
-                        <span style="font-size:.72rem;opacity:.6">{{ sp.account.commodity_mnemonic }}</span>
-                      {% endif %}
+                      {{ sp.display_amount|num:account_prefs }}
+                      <span class="ccy-tag">{{ sp.account.commodity_mnemonic }}</span>
                     {% endif %}
                   </td>
                   <td class="amount {% if sp.value_num < 0 %}negative{% endif %}">
                     {% if sp.value_num < 0 %}
-                      {{ sp.display_amount|amt:prefs }}
-                      {% if sp.quantity_num is not None and sp.account.commodity_mnemonic != account.commodity_mnemonic %}
-                        <span style="font-size:.72rem;opacity:.6">{{ sp.account.commodity_mnemonic }}</span>
-                      {% endif %}
+                      {{ sp.display_amount|num:account_prefs }}
+                      <span class="ccy-tag">{{ sp.account.commodity_mnemonic }}</span>
                     {% endif %}
                   </td>
                 </tr>
@@ -252,6 +254,9 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
   #inline-txn-form input:focus, #inline-txn-form select:focus { outline: none; border-color: var(--accent); }
   .balance-ok   { color: var(--success); font-weight: 600; }
   .balance-warn { color: var(--danger);  font-weight: 600; }
+
+  /* currency label next to amounts */
+  .ccy-tag { font-size: .68rem; opacity: .55; margin-left: 2px; font-weight: 400; }
 
   /* hidden-col utility — toggled by JS */
   #register-table td.col-hidden,

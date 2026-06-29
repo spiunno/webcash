@@ -42,6 +42,31 @@ def amt(value, prefs):
 
 
 @register.filter
+def num(value, prefs):
+    """Format a number with correct decimal separator but no currency symbol.
+
+    prefs may be a UserPreferences object or anything with .decimal_separator.
+    If prefs also has .decimal_places (set by the view for account-specific
+    formatting), that overrides the default of 2.
+
+    Usage: {{ value|num:prefs }}  or  {{ value|num:account_prefs }}
+    """
+    if prefs is None or value is None:
+        return value
+    try:
+        v = Decimal(str(value))
+    except Exception:
+        return value
+    dp  = getattr(prefs, 'decimal_places', 2)
+    sep = getattr(prefs, 'decimal_separator', '.')
+    fmt = f'{abs(v):,.{dp}f}'
+    if sep == ',':
+        fmt = fmt.replace(',', 'X').replace('.', ',').replace('X', '.')
+    sign = '-' if v < 0 else ''
+    return f'{sign}{fmt}'
+
+
+@register.filter
 def udate(value, prefs):
     """Format a date using the user's date_format preference.
     Usage: {{ value|udate:prefs }}

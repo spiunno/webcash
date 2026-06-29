@@ -68,7 +68,10 @@ window.CURRENT_TAB = {id:'dashboard', label:'Dashboard', url:'{% url "dashboard"
         </td>
         <td class="amount">
           {% for s in txn.splits.all %}
-            {% if s.value_num > 0 %}{{ s.value_num|amt:prefs }}{% endif %}
+            {% if s.value_num > 0 %}
+              {{ s.display_amount|num:prefs }}
+              <span class="ccy-tag" style="font-size:.7rem;opacity:.55;">{{ s.account.commodity_mnemonic }}</span>
+            {% endif %}
           {% endfor %}
         </td>
       </tr>

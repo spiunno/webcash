@@ -110,10 +110,21 @@ def account_register(request, account_id):
             'display_amount': display_amount,
         })
 
+    import math as _math
+    sf = account.smallest_fraction or 100
+    dp = round(_math.log10(sf)) if sf > 1 else 0
+    # Build a prefs-like object carrying decimal_places for this account's fraction
+    base_prefs = UserPreferences.for_user(request.user)
+    class _AccountPrefs:
+        decimal_separator = base_prefs.decimal_separator
+        decimal_places    = dp
+    account_prefs = _AccountPrefs()
+
     return render(request, 'ledger/register.html', {
         'account': account,
         'rows': rows,
         'account_tree': account_tree,
+        'account_prefs': account_prefs,
     })
 
 
@@ -397,9 +408,13 @@ def accounts_overview(request):
     from collections import defaultdict
     all_accounts = list(Account.objects.all())
 
-    # Direct balances per account
+    # Direct balances per account — use quantity_num (native commodity) when available
+    from django.db.models.functions import Coalesce as _Coalesce
+    from django.db.models import F as _F
     direct = defaultdict(lambda: Decimal('0'))
-    for row in Split.objects.values('account_id').annotate(total=Sum('value_num')):
+    for row in Split.objects.values('account_id').annotate(
+        total=Sum(_Coalesce('quantity_num', 'value_num'))
+    ):
         direct[row['account_id']] = row['total'] or Decimal('0')
 
     # Build tree and compute cumulative balances bottom-up

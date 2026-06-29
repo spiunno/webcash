@@ -53,7 +53,7 @@ window.CURRENT_TAB = {id:'accounts', label:'Accounts', url:'{% url "accounts_ove
         <td style="font-size:.82rem;color:var(--text-muted);">{{ acc.description|truncatechars:60 }}</td>
         <td class="amount" style="{% if acc.cum_balance >= 0 %}color:var(--success);{% else %}color:var(--danger);{% endif %}
               {% if row.depth == 0 %}font-weight:700;{% endif %}">
-          {% if not acc.placeholder %}{{ acc.cum_balance|amt:prefs }}{% endif %}
+          {% if not acc.placeholder %}{{ acc.cum_balance|num:prefs }} <span class="ccy-tag">{{ acc.commodity_mnemonic }}</span>{% endif %}
         </td>
         <td style="width:50px;padding:4px 8px;text-align:right;">
           <a href="{% url 'account_edit' acc.id %}" style="font-size:.75rem;color:var(--text-muted);text-decoration:none;opacity:0;" class="acc-edit-btn">Edit</a>

@@ -13,28 +13,35 @@ from xml.etree import ElementTree as ET
 from .models import Account, Transaction, Split
 
 NS = {
-    'gnc': 'http://www.gnucash.org/XML/gnc',
-    'act': 'http://www.gnucash.org/XML/act',
-    'trn': 'http://www.gnucash.org/XML/trn',
+    'gnc':   'http://www.gnucash.org/XML/gnc',
+    'act':   'http://www.gnucash.org/XML/act',
+    'trn':   'http://www.gnucash.org/XML/trn',
     'split': 'http://www.gnucash.org/XML/split',
-    'ts': 'http://www.gnucash.org/XML/ts',
+    'ts':    'http://www.gnucash.org/XML/ts',
     'cmdty': 'http://www.gnucash.org/XML/cmdty',
+    'slot':  'http://www.gnucash.org/XML/slot',
 }
 
+# Maps GnuCash account types to our model constants (preserving all subtypes)
 GNUCASH_TYPE_MAP = {
-    'ASSET': Account.ASSET,
-    'BANK': Account.ASSET,
-    'CASH': Account.ASSET,
-    'CREDIT': Account.LIABILITY,
-    'LIABILITY': Account.LIABILITY,
-    'INCOME': Account.INCOME,
-    'EXPENSE': Account.EXPENSE,
-    'EQUITY': Account.EQUITY,
-    'STOCK': Account.ASSET,
-    'MUTUAL': Account.ASSET,
-    'RECEIVABLE': Account.ASSET,
-    'PAYABLE': Account.LIABILITY,
+    'ASSET':      Account.ASSET,
+    'BANK':       Account.BANK,
+    'CASH':       Account.CASH,
+    'CREDIT':     Account.CREDIT,
+    'CREDIT CARD': Account.CREDIT,
+    'LIABILITY':  Account.LIABILITY,
+    'INCOME':     Account.INCOME,
+    'EXPENSE':    Account.EXPENSE,
+    'EQUITY':     Account.EQUITY,
+    'STOCK':      Account.STOCK,
+    'MUTUAL':     Account.MUTUAL,
+    'RECEIVABLE': Account.RECEIVABLE,
+    'PAYABLE':    Account.PAYABLE,
+    'ROOT':       Account.EQUITY,  # invisible root
 }
+
+# Account types that hold securities rather than currency units
+SECURITY_TYPES = {'STOCK', 'MUTUAL'}
 
 
 def _parse_value(fraction_str):
@@ -83,30 +90,40 @@ def import_file(path):
         act_name = act_el.findtext('act:name', namespaces=NS) or ''
         act_type_raw = act_el.findtext('act:type', namespaces=NS) or 'ASSET'
         act_type = GNUCASH_TYPE_MAP.get(act_type_raw.upper(), Account.ASSET)
-        placeholder = act_el.findtext('act:slots/slot/slot:value', namespaces={
-            **NS, 'slot': 'http://www.gnucash.org/XML/slot'
-        }) == 'true'
+
+        # Detect placeholder from the slots (key="placeholder", value="true")
+        placeholder = False
+        for slot_el in act_el.findall('act:slots/slot:slot', NS):
+            if (slot_el.findtext('slot:key', namespaces=NS) == 'placeholder'
+                    and slot_el.findtext('slot:value', namespaces=NS) == 'true'):
+                placeholder = True
+                break
 
         commodity_el = act_el.find('act:commodity', NS)
-        mnemonic = 'USD'
+        mnemonic = 'EUR'
+        namespace = Account.NAMESPACE_CURRENCY
         if commodity_el is not None:
-            mnemonic = commodity_el.findtext('cmdty:id', namespaces=NS) or 'USD'
+            mnemonic = commodity_el.findtext('cmdty:id', namespaces=NS) or 'EUR'
+            ns_raw = (commodity_el.findtext('cmdty:space', namespaces=NS) or '').upper()
+            if ns_raw in ('NYSE', 'NASDAQ', 'EUREX', 'LSE') or act_type_raw.upper() in SECURITY_TYPES:
+                namespace = Account.NAMESPACE_SECURITY
 
+        description = act_el.findtext('act:description', namespaces=NS) or ''
         parent_guid = act_el.findtext('act:parent', namespaces=NS)
         parent_obj = guid_to_account.get(parent_guid)
 
         act_uuid = uuid.UUID(act_guid) if act_guid else uuid.uuid4()
 
-        obj, created = Account.objects.get_or_create(
-            guid=act_uuid,
-            defaults=dict(
-                name=act_name,
-                account_type=act_type,
-                commodity_mnemonic=mnemonic,
-                parent=parent_obj,
-                placeholder=placeholder,
-            )
+        fields = dict(
+            name=act_name,
+            account_type=act_type,
+            commodity_namespace=namespace,
+            commodity_mnemonic=mnemonic,
+            description=description,
+            parent=parent_obj,
+            placeholder=placeholder,
         )
+        obj, created = Account.objects.update_or_create(guid=act_uuid, defaults=fields)
         guid_to_account[act_guid] = obj
         if created:
             stats['accounts_created'] += 1
@@ -118,10 +135,6 @@ def import_file(path):
         trn_guid = trn_el.findtext('trn:id', namespaces=NS)
         trn_uuid = uuid.UUID(trn_guid) if trn_guid else uuid.uuid4()
 
-        if Transaction.objects.filter(guid=trn_uuid).exists():
-            stats['transactions_skipped'] += 1
-            continue
-
         date_str = trn_el.findtext('trn:date-posted/ts:date', namespaces=NS) or ''
         try:
             post_date = _parse_date(date_str)
@@ -129,12 +142,21 @@ def import_file(path):
             post_date = date.today()
 
         description = trn_el.findtext('trn:description', namespaces=NS) or ''
+        currency_el = trn_el.find('trn:currency', NS)
+        trn_currency = 'EUR'
+        if currency_el is not None:
+            trn_currency = currency_el.findtext('cmdty:id', namespaces=NS) or 'EUR'
 
-        trn_obj = Transaction.objects.create(
+        trn_obj, trn_created = Transaction.objects.update_or_create(
             guid=trn_uuid,
-            post_date=post_date,
-            description=description,
+            defaults=dict(post_date=post_date, description=description, currency=trn_currency),
         )
+        if not trn_created:
+            # Re-import: wipe old splits so they'll be recreated from the file
+            trn_obj.splits.all().delete()
+            stats['transactions_skipped'] += 1
+        else:
+            stats['transactions_created'] += 1
 
         for split_el in trn_el.findall('trn:splits/trn:split', NS):
             split_guid = split_el.findtext('split:id', namespaces=NS)
@@ -144,20 +166,29 @@ def import_file(path):
             if split_account is None:
                 continue
 
+            # value = amount in transaction's base currency (sums to 0)
             value_str = split_el.findtext('split:value', namespaces=NS) or '0/1'
             value = _parse_value(value_str)
+
+            # quantity = amount in the account's own commodity (may differ for cross-currency/securities)
+            qty_str = split_el.findtext('split:quantity', namespaces=NS) or '0/1'
+            quantity = _parse_value(qty_str)
+            # Only store quantity_num when it differs from value (avoids storing redundant data)
+            quantity_num = quantity if quantity != value else None
+
             memo = split_el.findtext('split:memo', namespaces=NS) or ''
             reconcile_state = split_el.findtext('split:reconciled-state', namespaces=NS) or 'n'
 
-            Split.objects.create(
+            Split.objects.update_or_create(
                 guid=split_uuid,
-                transaction=trn_obj,
-                account=split_account,
-                value_num=value,
-                memo=memo,
-                reconciled=(reconcile_state == 'y'),
+                defaults=dict(
+                    transaction=trn_obj,
+                    account=split_account,
+                    value_num=value,
+                    quantity_num=quantity_num,
+                    memo=memo,
+                    reconciled=(reconcile_state == 'y'),
+                ),
             )
-
-        stats['transactions_created'] += 1
 
     return stats
