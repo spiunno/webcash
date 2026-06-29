@@ -479,9 +479,29 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
     if (!form) return;
     const body = inner.querySelector('#inline-splits-body');
 
+    function addBalanceRow(rounded) {
+      const idx = body.querySelectorAll('.inline-split-row').length;
+      const clone = body.querySelector('.inline-split-row').cloneNode(true);
+      clone.querySelectorAll('[name]').forEach(el => {
+        el.name = el.name.replace(/split_\d+_/, `split_${idx}_`);
+        if (el.tagName === 'INPUT') el.value = '';
+        if (el.tagName === 'SELECT') el.selectedIndex = 0;
+      });
+      clone.dataset.autoBalance = '1';
+      clone.style.background = 'color-mix(in srgb, var(--accent) 8%, transparent)';
+      clone.style.outline = '1px dashed var(--accent)';
+      body.appendChild(clone);
+      attachRemove(clone);
+      // stop auto-managing this row if the user edits amounts manually
+      clone.querySelector('.pi-debit').addEventListener('input', () => { delete clone.dataset.autoBalance; clone.style.outline = ''; clone.style.background = ''; });
+      clone.querySelector('.pi-credit').addEventListener('input', () => { delete clone.dataset.autoBalance; clone.style.outline = ''; clone.style.background = ''; });
+      return clone;
+    }
+
     function updateBalance() {
       let total = 0;
       body.querySelectorAll('.inline-split-row').forEach(r => {
+        if (r.dataset.autoBalance) return;
         const d = parseFloat(r.querySelector('.pi-debit').value.replace(',', '.')) || 0;
         const c = parseFloat(r.querySelector('.pi-credit').value.replace(',', '.')) || 0;
         total += d - c;
@@ -489,8 +509,31 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
       const el = inner.querySelector('#pi-balance');
       if (!el) return;
       const rounded = Math.round(total * 100) / 100;
-      if (rounded === 0) { el.textContent = '✓ Balanced'; el.className = 'balance-ok'; }
-      else { el.textContent = `Out of balance: ${rounded > 0 ? '+' : ''}${rounded.toFixed(2)}`; el.className = 'balance-warn'; }
+
+      let autoRow = body.querySelector('[data-auto-balance]');
+
+      if (rounded !== 0) {
+        if (!autoRow) autoRow = addBalanceRow(rounded);
+        // keep the pre-filled amount in sync
+        const di = autoRow.querySelector('.pi-debit');
+        const ci = autoRow.querySelector('.pi-credit');
+        if (rounded > 0) { di.value = ''; ci.value = rounded.toFixed(2); }
+        else              { di.value = (-rounded).toFixed(2); ci.value = ''; }
+        el.textContent = `Out of balance: ${rounded > 0 ? '+' : ''}${rounded.toFixed(2)} — select account below`;
+        el.className = 'balance-warn';
+        autoRow.querySelector('select').focus();
+      } else {
+        if (autoRow) {
+          if (!autoRow.querySelector('select').value && body.querySelectorAll('.inline-split-row').length > 2) {
+            autoRow.remove(); renumber();
+          } else {
+            delete autoRow.dataset.autoBalance;
+            autoRow.style.outline = '';
+            autoRow.style.background = '';
+          }
+        }
+        el.textContent = '✓ Balanced'; el.className = 'balance-ok';
+      }
     }
 
     function renumber() {

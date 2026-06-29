@@ -1,0 +1,95 @@
+{% extends "ledger/base.html" %}
+
+{% block title %}Saved Reports — WebCash{% endblock %}
+
+{% block tab_script %}
+window.CURRENT_TAB = {id:'saved-reports', label:'Saved Reports', url:'{% url "saved_reports" %}', closeable:true};
+{% endblock %}
+
+{% block breadcrumb %}Reports &rsaquo; Saved Reports{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:860px">
+  <div class="card-title">Saved Reports</div>
+  <div id="sr-list"></div>
+</div>
+
+<script>
+const CFG_KEY   = 'webcash_nw_configs_v1';
+const RPT_URL   = '{% url "networth_report" %}';
+
+const STEP_LABELS = {
+  day:'Daily', week:'Weekly', '2week':'Bi-weekly',
+  month:'Monthly', quarter:'Quarterly', halfyear:'Half-yearly', year:'Yearly',
+};
+
+function getSavedConfigs() {
+  try { return JSON.parse(localStorage.getItem(CFG_KEY)) || []; }
+  catch { return []; }
+}
+
+function saveSavedConfigs(configs) {
+  localStorage.setItem(CFG_KEY, JSON.stringify(configs));
+}
+
+function cfgSummary(p) {
+  const start = p.startPreset ? presetLabel(p.startPreset) : p.startDate;
+  const end   = p.endPreset   ? presetLabel(p.endPreset)   : p.endDate;
+  const step  = STEP_LABELS[p.step] || p.step;
+  const n     = (p.accountIds || []).length;
+  return `${start} → ${end} · ${step} · ${p.currency} · ${n} account${n!==1?'s':''}`;
+}
+
+function presetLabel(p) {
+  const map = {
+    today:'Today', start_month:'Start of month', end_month:'End of month',
+    start_prev_month:'Start of prev month', end_prev_month:'End of prev month',
+    start_quarter:'Start of quarter', end_quarter:'End of quarter',
+    start_prev_quarter:'Start of prev quarter', end_prev_quarter:'End of prev quarter',
+    start_year:'Start of year', end_year:'End of year',
+    start_prev_year:'Start of prev year', end_prev_year:'End of prev year',
+  };
+  return map[p] || p;
+}
+
+function render() {
+  const configs = getSavedConfigs();
+  const el = document.getElementById('sr-list');
+
+  if (!configs.length) {
+    el.innerHTML = `<p class="sr-empty">No saved reports yet. Configure and save a report from the <a href="${RPT_URL}">Net Worth Chart</a> page.</p>`;
+    return;
+  }
+
+  el.innerHTML = configs.map((c, idx) => `
+    <div class="sr-row" id="sr-row-${c.id}">
+      <div class="sr-info">
+        <div class="sr-name" id="sr-name-${c.id}">${escHtml(c.name)}</div>
+        <div class="sr-summary">${cfgSummary(c.params)}</div>
+        <div class="sr-meta">Saved ${c.savedAt}</div>
+      </div>
+      <div class="sr-actions">
+        <a class="btn-sm" href="${RPT_URL}?load=${c.id}&run=1">▶ Open</a>
+        <a class="btn-sm" href="${RPT_URL}?load=${c.id}">✎ Edit</a>
+        <button class="btn-sm btn-sm-del" onclick="confirmDelete('${c.id}')">✕ Delete</button>
+      </div>
+    </div>
+    ${idx < configs.length-1 ? '<hr class="sr-divider">' : ''}
+  `).join('');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function confirmDelete(id) {
+  const cfg = getSavedConfigs().find(c => c.id === id);
+  if (!cfg) return;
+  if (!confirm(`Delete "${cfg.name}"?`)) return;
+  saveSavedConfigs(getSavedConfigs().filter(c => c.id !== id));
+  render();
+}
+
+render();
+</script>
+{% endblock %}

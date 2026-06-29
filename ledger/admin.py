@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Account, Transaction, Split
+from .models import Account, Transaction, Split, Price
 
 
 class SplitInline(admin.TabularInline):
@@ -28,3 +28,11 @@ class SplitAdmin(admin.ModelAdmin):
     list_display = ('transaction', 'account', 'value_num', 'reconciled')
     list_filter = ('reconciled',)
     search_fields = ('memo',)
+
+
+@admin.register(Price)
+class PriceAdmin(admin.ModelAdmin):
+    list_display = ('date', 'commodity_mnemonic', 'currency', 'value_num')
+    list_filter = ('currency', 'commodity_mnemonic')
+    search_fields = ('commodity_mnemonic', 'currency')
+    ordering = ('-date',)

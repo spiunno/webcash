@@ -1,0 +1,673 @@
+{% extends "ledger/base.html" %}
+
+{% block title %}Net Worth Report — WebCash{% endblock %}
+
+{% block tab_script %}
+window.CURRENT_TAB = {id:'report-networth', label:'Net Worth', url:'{% url "networth_report" %}', closeable:true};
+{% endblock %}
+
+{% block breadcrumb %}Reports &rsaquo; Net Worth Chart{% endblock %}
+
+{% block content %}
+<div class="rpt-layout" id="rpt-layout">
+
+  <!-- ===== CONFIG PANEL ===== -->
+  <div class="card rpt-config" id="rpt-config">
+    <div class="card-title">Report Configuration</div>
+
+    <div class="form-group">
+      <label for="rpt-title">Title</label>
+      <input type="text" id="rpt-title" value="Net Worth" placeholder="Report title">
+    </div>
+
+    <div class="rpt-date-row">
+      <div class="form-group">
+        <label>Start Date</label>
+        <div class="date-combo">
+          <select id="start-preset" onchange="applyPreset('start')">
+            <option value="">— custom —</option>
+            <option value="today">Today</option>
+            <option value="start_month">Start of this month</option>
+            <option value="start_prev_month">Start of prev month</option>
+            <option value="start_quarter">Start of this quarter</option>
+            <option value="start_prev_quarter">Start of prev quarter</option>
+            <option value="start_year" selected>Start of this year</option>
+            <option value="start_prev_year">Start of prev year</option>
+          </select>
+          <input type="date" id="start-date">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>End Date</label>
+        <div class="date-combo">
+          <select id="end-preset" onchange="applyPreset('end')">
+            <option value="">— custom —</option>
+            <option value="today" selected>Today</option>
+            <option value="end_month">End of this month</option>
+            <option value="end_prev_month">End of prev month</option>
+            <option value="end_quarter">End of this quarter</option>
+            <option value="end_prev_quarter">End of prev quarter</option>
+            <option value="end_year">End of this year</option>
+            <option value="end_prev_year">End of prev year</option>
+          </select>
+          <input type="date" id="end-date">
+        </div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="rpt-step">Step Size</label>
+      <select id="rpt-step">
+        <option value="day">One day</option>
+        <option value="week">One week</option>
+        <option value="2week">Two weeks</option>
+        <option value="month" selected>One month</option>
+        <option value="quarter">Quarter year</option>
+        <option value="halfyear">Half year</option>
+        <option value="year">One year</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="rpt-currency">Currency</label>
+      <select id="rpt-currency">
+        {% for code, label in currencies %}
+        <option value="{{ code }}"{% if code == 'EUR' %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label>Accounts</label>
+      <div class="acct-toolbar">
+        <button class="btn-sm" onclick="selectAllAccounts()">All</button>
+        <button class="btn-sm" onclick="clearAllAccounts()">None</button>
+        <button class="btn-sm" onclick="selectDefaultAccounts()">Assets &amp; Liabilities</button>
+        <label class="inline-check"><input type="checkbox" id="show-hidden" onchange="renderAccountTree()"> Show hidden</label>
+      </div>
+      <div id="acct-tree" class="acct-tree"></div>
+    </div>
+
+    <button class="btn btn-primary rpt-run-btn" onclick="runReport()" id="run-btn">Run Report</button>
+
+    <!-- ── Saved configurations ── -->
+    <div class="rpt-save-section">
+      <div class="rpt-save-header">
+        <span class="rpt-save-title">Saved Configurations</span>
+        <button class="btn-link rpt-save-toggle" onclick="toggleSavePanel()" id="save-toggle-btn">▸ Save current</button>
+      </div>
+      <div id="save-panel" style="display:none">
+        <div class="rpt-save-row">
+          <input type="text" id="save-name" placeholder="Configuration name…" onkeydown="if(event.key==='Enter')saveConfig()">
+          <button class="btn-sm" onclick="saveConfig()">Save</button>
+        </div>
+      </div>
+      <div id="saved-configs-list" class="saved-configs-list"></div>
+    </div>
+  </div>
+
+  <!-- ===== OUTPUT AREA ===== -->
+  <div id="rpt-output" class="rpt-output" style="display:none">
+
+    <!-- print-only header -->
+    <div class="print-header" style="display:none">
+      <div class="print-header-brand">WebCash</div>
+      <div id="print-header-title" class="print-header-title"></div>
+      <div id="print-header-meta" class="print-header-meta"></div>
+    </div>
+
+    <div class="card">
+      <div class="rpt-output-header">
+        <div class="rpt-output-left">
+          <h2 id="rpt-output-title" class="card-title" style="margin-bottom:0"></h2>
+          <button class="btn-sm rpt-reconfigure-btn" onclick="reconfigure()" id="reconfigure-btn" style="display:none">⚙ Reconfigure</button>
+        </div>
+        <label class="inline-check">
+          <input type="checkbox" id="show-breakdown" onchange="updateChart()"> Show Assets &amp; Liabilities separately
+        </label>
+      </div>
+      <div class="rpt-chart-wrap">
+        <canvas id="rpt-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="rpt-table-header">
+        <div class="card-title" style="margin-bottom:0">Data Table</div>
+        <div class="rpt-export-btns">
+          <button class="btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
+          <button class="btn-sm" onclick="exportPDF()">🖨 Export PDF</button>
+        </div>
+      </div>
+      <div id="rpt-table-wrap" style="overflow-x:auto;margin-top:14px"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const ACCOUNTS = {{ accounts_json|safe }};
+/* ── Date preset helpers ────────────────────────────────────── */
+function fmtDate(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+
+function getPreset(p) {
+  const n = new Date(), y = n.getFullYear(), mo = n.getMonth();
+  switch(p) {
+    case 'today':              return fmtDate(n);
+    case 'start_month':        return fmtDate(new Date(y, mo, 1));
+    case 'end_month':          return fmtDate(new Date(y, mo+1, 0));
+    case 'start_prev_month':   return fmtDate(new Date(y, mo-1, 1));
+    case 'end_prev_month':     return fmtDate(new Date(y, mo, 0));
+    case 'start_quarter':      { const q=Math.floor(mo/3); return fmtDate(new Date(y, q*3, 1)); }
+    case 'end_quarter':        { const q=Math.floor(mo/3); return fmtDate(new Date(y, q*3+3, 0)); }
+    case 'start_prev_quarter': { const q=Math.floor(mo/3)-1, py=q<0?y-1:y, pm=((q%4+4)%4)*3; return fmtDate(new Date(py,pm,1)); }
+    case 'end_prev_quarter':   { const q=Math.floor(mo/3); return fmtDate(new Date(y, q*3, 0)); }
+    case 'start_year':         return fmtDate(new Date(y, 0, 1));
+    case 'end_year':           return fmtDate(new Date(y, 11, 31));
+    case 'start_prev_year':    return fmtDate(new Date(y-1, 0, 1));
+    case 'end_prev_year':      return fmtDate(new Date(y-1, 11, 31));
+    default: return '';
+  }
+}
+
+function applyPreset(which) {
+  const sel = document.getElementById(which+'-preset');
+  if (sel.value) document.getElementById(which+'-date').value = getPreset(sel.value);
+}
+
+/* ── Account tree ───────────────────────────────────────────── */
+const checkedIds = new Set();
+const allIds = new Set(ACCOUNTS.map(a => a.id));
+
+const childrenOf = {};
+ACCOUNTS.forEach(a => {
+  const key = a.parent ?? '__root__';
+  if (!childrenOf[key]) childrenOf[key] = [];
+  childrenOf[key].push(a);
+});
+
+// Find effective roots (skip single placeholder root like GnuCash's Root Account)
+let topNodes = (childrenOf['__root__'] || []);
+if (topNodes.length === 1 && topNodes[0].placeholder) {
+  topNodes = childrenOf[topNodes[0].id] || [];
+}
+topNodes = [...topNodes].sort((a,b) => {
+  const order = {asset:0, liability:1, equity:2, other:3};
+  return (order[a.category]??3) - (order[b.category]??3) || a.name.localeCompare(b.name);
+});
+
+function selectDefaultAccounts() {
+  checkedIds.clear();
+  ACCOUNTS.forEach(a => {
+    if (!a.placeholder && (a.category === 'asset' || a.category === 'liability')) checkedIds.add(a.id);
+  });
+  renderAccountTree();
+}
+
+function selectAllAccounts() {
+  const sh = document.getElementById('show-hidden').checked;
+  ACCOUNTS.forEach(a => { if (!a.placeholder && (sh || !a.hidden)) checkedIds.add(a.id); });
+  renderAccountTree();
+}
+
+function clearAllAccounts() { checkedIds.clear(); renderAccountTree(); }
+
+function addDescendants(id) {
+  (childrenOf[id] || []).forEach(c => {
+    if (!c.placeholder) checkedIds.add(c.id);
+    addDescendants(c.id);
+  });
+}
+
+function selectChildren(id) { addDescendants(id); renderAccountTree(); }
+
+function renderNode(a, depth) {
+  const sh = document.getElementById('show-hidden').checked;
+  if (!sh && a.hidden) return '';
+  const children = (childrenOf[a.id] || []).filter(c => sh || !c.hidden);
+  const pad = depth * 18;
+  const checked = checkedIds.has(a.id) ? ' checked' : '';
+  const cls = ['acct-node', a.hidden?'acct-hidden':'', a.placeholder?'acct-placeholder':''].filter(Boolean).join(' ');
+
+  let h = `<div class="${cls}" style="padding-left:${pad}px">`;
+  if (a.placeholder) {
+    h += `<span class="acct-chevron">▸</span>`;
+  } else {
+    h += `<input type="checkbox" data-id="${a.id}"${checked} onchange="toggleAcct(${a.id},this.checked)">`;
+  }
+  h += `<span class="acct-name" title="${a.type} · ${a.commodity}">${a.name}</span>`;
+  if (children.length && !a.placeholder) {
+    h += `<button class="btn-link" onclick="selectChildren(${a.id})" title="Select all descendants">+sub</button>`;
+  }
+  h += `</div>`;
+  children.forEach(c => { h += renderNode(c, depth+1); });
+  return h;
+}
+
+function renderAccountTree() {
+  const container = document.getElementById('acct-tree');
+  let h = '';
+  topNodes.forEach(n => { h += renderNode(n, 0); });
+  container.innerHTML = h || '<em class="text-muted">No accounts</em>';
+}
+
+function toggleAcct(id, checked) {
+  if (checked) checkedIds.add(id); else checkedIds.delete(id);
+}
+
+/* ── Report execution ───────────────────────────────────────── */
+async function runReport() {
+  const btn = document.getElementById('run-btn');
+  const start = document.getElementById('start-date').value;
+  const end   = document.getElementById('end-date').value;
+  const step  = document.getElementById('rpt-step').value;
+  const cur   = document.getElementById('rpt-currency').value;
+  const title = document.getElementById('rpt-title').value.trim() || 'Net Worth';
+  const ids   = [...checkedIds].join(',');
+
+  if (!start || !end) { alert('Please set start and end dates.'); return; }
+  if (!ids)           { alert('Please select at least one account.'); return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Running…';
+  try {
+    const url = `{% url 'networth_report_data' %}?start=${start}&end=${end}&step=${step}&currency=${cur}&accounts=${ids}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('Server error ' + resp.status);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    lastData = {...data, title, reportCurrency: cur};
+    renderOutput(lastData);
+    collapseConfig();
+  } catch(e) {
+    alert('Error fetching report: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Report';
+  }
+}
+
+function collapseConfig() {
+  document.getElementById('rpt-config').style.display = 'none';
+  document.getElementById('reconfigure-btn').style.display = '';
+  document.getElementById('rpt-layout').classList.add('config-hidden');
+}
+
+function reconfigure() {
+  document.getElementById('rpt-config').style.display = '';
+  document.getElementById('reconfigure-btn').style.display = 'none';
+  document.getElementById('rpt-layout').classList.remove('config-hidden');
+  document.getElementById('rpt-config').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+/* ── Saved configurations ───────────────────────────────────── */
+const CFG_KEY = 'webcash_nw_configs_v1';
+
+function getSavedConfigs() {
+  try { return JSON.parse(localStorage.getItem(CFG_KEY)) || []; }
+  catch { return []; }
+}
+
+function getCurrentParams() {
+  return {
+    title:       document.getElementById('rpt-title').value,
+    startPreset: document.getElementById('start-preset').value,
+    startDate:   document.getElementById('start-date').value,
+    endPreset:   document.getElementById('end-preset').value,
+    endDate:     document.getElementById('end-date').value,
+    step:        document.getElementById('rpt-step').value,
+    currency:    document.getElementById('rpt-currency').value,
+    accountIds:  [...checkedIds],
+  };
+}
+
+function applyParams(p) {
+  document.getElementById('rpt-title').value    = p.title    || '';
+  document.getElementById('start-preset').value = p.startPreset || '';
+  document.getElementById('start-date').value   = p.startDate  || '';
+  document.getElementById('end-preset').value   = p.endPreset  || '';
+  document.getElementById('end-date').value     = p.endDate    || '';
+  document.getElementById('rpt-step').value     = p.step       || 'month';
+  document.getElementById('rpt-currency').value = p.currency   || 'EUR';
+  checkedIds.clear();
+  (p.accountIds || []).forEach(id => checkedIds.add(id));
+  renderAccountTree();
+}
+
+var activeConfigId = null;  // id of the currently loaded saved config, if any
+
+function saveConfig() {
+  const name = document.getElementById('save-name').value.trim();
+  if (!name) { document.getElementById('save-name').focus(); return; }
+  const configs = getSavedConfigs();
+  if (activeConfigId) {
+    // Update existing
+    const idx = configs.findIndex(c => c.id === activeConfigId);
+    if (idx !== -1) {
+      configs[idx] = {...configs[idx], name, savedAt: new Date().toISOString().slice(0,10), params: getCurrentParams()};
+      localStorage.setItem(CFG_KEY, JSON.stringify(configs));
+      document.getElementById('save-name').value = '';
+      renderSavedConfigs();
+      return;
+    }
+  }
+  // New config
+  const newCfg = {id: Math.random().toString(36).slice(2), name, savedAt: new Date().toISOString().slice(0,10), params: getCurrentParams()};
+  configs.unshift(newCfg);
+  activeConfigId = newCfg.id;
+  localStorage.setItem(CFG_KEY, JSON.stringify(configs));
+  document.getElementById('save-name').value = '';
+  renderSavedConfigs();
+}
+
+function loadConfig(id, autoRun = true) {
+  const cfg = getSavedConfigs().find(c => c.id === id);
+  if (!cfg) return;
+  activeConfigId = id;
+  applyParams(cfg.params);
+  document.getElementById('save-name').value = cfg.name;
+  if (autoRun) runReport(); else document.getElementById('rpt-config').scrollIntoView({behavior:'smooth'});
+}
+
+function deleteConfig(id) {
+  const configs = getSavedConfigs().filter(c => c.id !== id);
+  localStorage.setItem(CFG_KEY, JSON.stringify(configs));
+  renderSavedConfigs();
+}
+
+function renderSavedConfigs() {
+  const configs = getSavedConfigs();
+  const el = document.getElementById('saved-configs-list');
+  if (!configs.length) {
+    el.innerHTML = '<em class="text-muted" style="font-size:.8rem;display:block;padding:6px 0">No saved configurations yet</em>';
+    return;
+  }
+  el.innerHTML = configs.map(c => `
+    <div class="saved-cfg-row">
+      <span class="saved-cfg-name" title="Saved ${c.savedAt}">${c.name}</span>
+      <button class="btn-sm" onclick="loadConfig('${c.id}')">Open</button>
+      <button class="btn-sm btn-sm-del" onclick="deleteConfig('${c.id}')" title="Delete">✕</button>
+    </div>`).join('');
+}
+
+function toggleSavePanel() {
+  const p = document.getElementById('save-panel');
+  const btn = document.getElementById('save-toggle-btn');
+  const open = p.style.display === 'none';
+  p.style.display = open ? '' : 'none';
+  btn.textContent = open ? '▾ Save current' : '▸ Save current';
+  if (open) document.getElementById('save-name').focus();
+}
+
+/* ── CSV / PDF export ───────────────────────────────────────── */
+function exportCSV() {
+  if (!lastData) return;
+  const cur = lastData.reportCurrency || lastData.currency;
+  const rows = [['Date', `Assets (${cur})`, `Liabilities (${cur})`, `Net Worth (${cur})`]];
+  lastData.dates.forEach((d, i) => {
+    rows.push([d, lastData.assets[i], lastData.liabilities[i], lastData.net_worth[i]]);
+  });
+  const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\r\n');
+  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = (lastData.title || 'networth').replace(/[^a-z0-9_\-]/gi, '_') + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function exportPDF() {
+  if (!lastData) return;
+  const cur = lastData.reportCurrency || lastData.currency;
+
+  // Snapshot chart at high resolution before opening the print window
+  const canvas = document.getElementById('rpt-chart');
+  let chartImg = '';
+  if (canvas) chartImg = canvas.toDataURL('image/png');
+
+  const now = new Date().toISOString().slice(0,10);
+  const start = lastData.dates[0] || '';
+  const end   = lastData.dates[lastData.dates.length - 1] || '';
+  const step  = document.getElementById('rpt-step')?.selectedOptions[0]?.text || '';
+
+  // Build table rows
+  const tableRows = lastData.dates.map((d, i) => {
+    const nw = lastData.net_worth[i];
+    return `<tr>
+      <td>${d}</td>
+      <td class="num pos">${fmtAmt(lastData.assets[i], cur)}</td>
+      <td class="num neg">${fmtAmt(lastData.liabilities[i], cur)}</td>
+      <td class="num ${nw >= 0 ? 'pos' : 'neg'}">${fmtAmt(nw, cur)}</td>
+    </tr>`;
+  }).join('');
+
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${esc(lastData.title)}</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111; margin: 32px 40px; font-size: 11pt; }
+  .brand { font-size: 10pt; font-weight: 700; color: #1a3320; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 10px; }
+  h1 { font-size: 22pt; font-weight: 700; margin-bottom: 4px; }
+  .meta { font-size: 9pt; color: #666; margin-bottom: 28px; padding-bottom: 14px; border-bottom: 2px solid #1a3320; }
+  img.chart { width: 100%; height: auto; display: block; margin-bottom: 28px; }
+  table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+  thead th { text-align: left; padding: 7px 10px; font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em; color: #555; border-bottom: 2px solid #ccc; }
+  thead th.num { text-align: right; }
+  td { padding: 7px 10px; border-bottom: 1px solid #e8e8e8; vertical-align: top; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:nth-child(even) td { background: #f7f7f7; }
+  .pos { color: #1e7a38; }
+  .neg { color: #b52a2a; }
+  @media print {
+    body { margin: 0; }
+    tbody tr:nth-child(even) td { background: #f7f7f7 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .pos { color: #1e7a38 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .neg { color: #b52a2a !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+  <div class="brand">WebCash</div>
+  <h1>${esc(lastData.title)}</h1>
+  <p class="meta">${esc(start)} – ${esc(end)} &nbsp;·&nbsp; ${esc(step)} &nbsp;·&nbsp; ${esc(cur)} &nbsp;·&nbsp; Generated ${now}</p>
+  ${chartImg ? `<img class="chart" src="${chartImg}">` : ''}
+  <table>
+    <thead><tr>
+      <th>Date</th>
+      <th class="num">Assets</th>
+      <th class="num">Liabilities</th>
+      <th class="num">Net Worth</th>
+    </tr></thead>
+    <tbody>${tableRows}</tbody>
+  </table>
+</body>
+</html>`;
+
+  const win = window.open('', '_blank', 'width=820,height=680');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  // Small delay to let the image render before print dialog opens
+  setTimeout(() => { win.print(); win.close(); }, 600);
+}
+
+/* ── Init ───────────────────────────────────────────────────── */
+(function init() {
+  const params = new URLSearchParams(window.location.search);
+  const loadId = params.get('load');
+  const autoRun = params.get('run') === '1';
+
+  if (loadId) {
+    loadConfig(loadId, autoRun);
+  } else {
+    applyPreset('start');
+    applyPreset('end');
+    selectDefaultAccounts();
+  }
+
+  renderSavedConfigs();
+  ['start','end'].forEach(w => {
+    document.getElementById(w+'-date').addEventListener('change', () => {
+      document.getElementById(w+'-preset').value = '';
+    });
+  });
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script>
+var chart = null;
+var lastData = null;
+
+function updateChart() { if (lastData) renderOutput(lastData); }
+
+function renderOutput(data) {
+  document.getElementById('rpt-output').style.display = '';
+  document.getElementById('rpt-output-title').textContent = data.title;
+  updatePrintHeader(data);
+  const breakdown = document.getElementById('show-breakdown').checked;
+  const cur = data.reportCurrency || data.currency;
+
+  const datasets = breakdown ? [
+    {
+      label: 'Assets',
+      data: data.assets,
+      backgroundColor: 'rgba(74,146,56,0.72)',
+      borderColor: 'rgba(74,146,56,1)',
+      borderWidth: 1,
+      stack: 'b',
+      order: 2,
+    },
+    {
+      label: 'Liabilities',
+      data: data.liabilities.map(v => -Math.abs(v)),
+      backgroundColor: 'rgba(192,57,43,0.72)',
+      borderColor: 'rgba(192,57,43,1)',
+      borderWidth: 1,
+      stack: 'b',
+      order: 2,
+    },
+    {
+      type: 'line',
+      label: 'Net Worth',
+      data: data.net_worth,
+      borderColor: '#1a3320',
+      backgroundColor: 'rgba(26,51,32,0.08)',
+      borderWidth: 2.5,
+      pointRadius: data.dates.length > 60 ? 0 : 3,
+      tension: 0.25,
+      order: 1,
+    },
+  ] : [
+    {
+      label: 'Net Worth',
+      data: data.net_worth,
+      backgroundColor: data.net_worth.map(v => v >= 0 ? 'rgba(74,146,56,0.8)' : 'rgba(192,57,43,0.8)'),
+      borderColor:     data.net_worth.map(v => v >= 0 ? 'rgba(74,146,56,1)'   : 'rgba(192,57,43,1)'),
+      borderWidth: 1,
+    },
+  ];
+
+  const ctx = document.getElementById('rpt-chart').getContext('2d');
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: data.dates, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: {
+          callbacks: { label: c => `${c.dataset.label}: ${fmtAmt(c.raw, cur)}` }
+        },
+      },
+      scales: {
+        x: {
+          stacked: breakdown,
+          ticks: { maxRotation: 45, autoSkip: true, maxTicksLimit: 30, font: {size: 11} },
+        },
+        y: {
+          stacked: breakdown,
+          ticks: { callback: v => fmtAmt(v, cur), font: {size: 11} },
+        },
+      },
+    },
+  });
+
+  renderTable(data, cur);
+  document.getElementById('rpt-output').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function fmtAmt(v, cur) {
+  if (v === null || v === undefined) return '—';
+  try {
+    return new Intl.NumberFormat(navigator.language, {
+      style: 'currency', currency: cur,
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    }).format(v);
+  } catch { return Number(v).toFixed(2) + ' ' + cur; }
+}
+
+function updatePrintHeader(data) {
+  const cur = data.reportCurrency || data.currency;
+  document.getElementById('print-header-title').textContent = data.title;
+  const start = data.dates[0] || '';
+  const end   = data.dates[data.dates.length - 1] || '';
+  const step  = document.getElementById('rpt-step')?.selectedOptions[0]?.text || '';
+  const now   = new Date().toISOString().slice(0, 10);
+  document.getElementById('print-header-meta').textContent =
+    `${start} – ${end}  ·  ${step}  ·  ${cur}  ·  Generated ${now}`;
+}
+
+/* ── Print: resize chart to page width, then restore ─────────── */
+var _chartWidthBeforePrint = null;
+
+window.addEventListener('beforeprint', () => {
+  if (!chart) return;
+  // A4 content width at 96dpi ≈ 740px; use the card's actual clientWidth if visible
+  const wrap = document.querySelector('.rpt-chart-wrap');
+  const printWidth = (wrap ? wrap.clientWidth : 0) || 680;
+  _chartWidthBeforePrint = {w: chart.width, h: chart.height};
+  chart.resize(printWidth, Math.round(printWidth * 0.45));
+});
+
+window.addEventListener('afterprint', () => {
+  if (!chart || !_chartWidthBeforePrint) return;
+  chart.resize();  // restore to CSS-driven size
+  _chartWidthBeforePrint = null;
+});
+
+function renderTable(data, cur) {
+  let h = `<table>
+    <thead><tr>
+      <th>Date</th>
+      <th class="amount">Assets</th>
+      <th class="amount">Liabilities</th>
+      <th class="amount">Net Worth</th>
+    </tr></thead><tbody>`;
+  data.dates.forEach((d,i) => {
+    const nw = data.net_worth[i];
+    h += `<tr>
+      <td>${d}</td>
+      <td class="amount positive">${fmtAmt(data.assets[i], cur)}</td>
+      <td class="amount negative">${fmtAmt(data.liabilities[i], cur)}</td>
+      <td class="amount ${nw>=0?'positive':'negative'}">${fmtAmt(nw, cur)}</td>
+    </tr>`;
+  });
+  h += `</tbody></table>`;
+  document.getElementById('rpt-table-wrap').innerHTML = h;
+}
+</script>
+{% endblock %}

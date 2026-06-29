@@ -532,6 +532,141 @@ def update_prices_ajax(request):
 
 
 @login_required
+def saved_reports(request):
+    account_tree = _build_tree()
+    return render(request, 'ledger/saved_reports.html', {'account_tree': account_tree})
+
+
+@login_required
+def networth_report(request):
+    import json as _json
+    account_tree = _build_tree()
+    all_accounts = list(Account.objects.all())
+
+    ASSET_TYPES  = {Account.ASSET, Account.BANK, Account.CASH, Account.RECEIVABLE, Account.STOCK, Account.MUTUAL}
+    LIAB_TYPES   = {Account.LIABILITY, Account.CREDIT, Account.PAYABLE}
+    EQUITY_TYPES = {Account.EQUITY}
+
+    accounts_json = []
+    for a in all_accounts:
+        if a.account_type in ASSET_TYPES:
+            cat = 'asset'
+        elif a.account_type in LIAB_TYPES:
+            cat = 'liability'
+        elif a.account_type in EQUITY_TYPES:
+            cat = 'equity'
+        else:
+            cat = 'other'
+        accounts_json.append({
+            'id': a.pk,
+            'name': a.name,
+            'type': a.account_type,
+            'category': cat,
+            'parent': a.parent_id,
+            'hidden': a.hidden,
+            'placeholder': a.placeholder,
+            'commodity': a.commodity_mnemonic,
+        })
+
+    prefs = UserPreferences.for_user(request.user)
+    return render(request, 'ledger/networth_report.html', {
+        'account_tree': account_tree,
+        'accounts_json': _json.dumps(accounts_json),
+        'currencies': CURRENCIES,
+        'prefs': prefs,
+    })
+
+
+@login_required
+def networth_report_data(request):
+    from django.http import JsonResponse
+    from datetime import date as date_type
+    from calendar import monthrange
+    from collections import defaultdict
+    from django.db.models.functions import Coalesce
+
+    start_str = request.GET.get('start', '')
+    end_str   = request.GET.get('end', '')
+    step      = request.GET.get('step', 'month')
+    report_currency = request.GET.get('currency', 'EUR').upper()
+    account_ids_str = request.GET.get('accounts', '')
+
+    try:
+        start = date_type.fromisoformat(start_str)
+        end   = date_type.fromisoformat(end_str)
+    except ValueError:
+        return JsonResponse({'error': 'Invalid dates'}, status=400)
+    if start > end:
+        return JsonResponse({'error': 'Start must be before end'}, status=400)
+
+    account_ids = [int(x) for x in account_ids_str.split(',') if x.strip().isdigit()] if account_ids_str.strip() else []
+    if not account_ids:
+        return JsonResponse({'dates': [], 'assets': [], 'liabilities': [], 'net_worth': [], 'currency': report_currency})
+
+    ASSET_TYPES = {Account.ASSET, Account.BANK, Account.CASH, Account.RECEIVABLE, Account.STOCK, Account.MUTUAL}
+    LIAB_TYPES  = {Account.LIABILITY, Account.CREDIT, Account.PAYABLE}
+
+    accounts = list(Account.objects.filter(pk__in=account_ids))
+
+    # Generate date series (cap at 500 points)
+    dates, current = [], start
+    while current <= end and len(dates) < 500:
+        dates.append(current)
+        current = _next_report_date(current, step)
+
+    # Prefetch all splits for selected accounts (single query)
+    splits_by_account = defaultdict(list)
+    for s in (Split.objects
+              .filter(account_id__in=account_ids)
+              .select_related('transaction')
+              .order_by('transaction__post_date')):
+        amt = s.quantity_num if s.quantity_num is not None else s.value_num
+        splits_by_account[s.account_id].append((s.transaction.post_date, amt))
+
+    # Cache exchange rates to avoid repeated DB lookups
+    price_cache = {}
+    def cached_price(mnemonic, d):
+        if mnemonic == report_currency:
+            return Decimal('1')
+        key = (mnemonic, d)
+        if key not in price_cache:
+            price_cache[key] = get_price(mnemonic, report_currency, d) or Decimal('1')
+        return price_cache[key]
+
+    result = {'dates': [], 'assets': [], 'liabilities': [], 'net_worth': []}
+    for d in dates:
+        assets_total = Decimal('0')
+        liab_total   = Decimal('0')
+        for acc in accounts:
+            native_bal = sum(amt for dt, amt in splits_by_account[acc.pk] if dt <= d) * acc.normal_balance
+            converted  = native_bal * cached_price(acc.commodity_mnemonic, d)
+            if acc.account_type in ASSET_TYPES:
+                assets_total += converted
+            elif acc.account_type in LIAB_TYPES:
+                liab_total += converted
+        result['dates'].append(str(d))
+        result['assets'].append(round(float(assets_total), 2))
+        result['liabilities'].append(round(float(liab_total), 2))
+        result['net_worth'].append(round(float(assets_total - liab_total), 2))
+
+    result['currency'] = report_currency
+    return JsonResponse(result)
+
+
+def _next_report_date(d, step):
+    from datetime import timedelta
+    from calendar import monthrange
+    if step == 'day':   return d + timedelta(days=1)
+    if step == 'week':  return d + timedelta(weeks=1)
+    if step == '2week': return d + timedelta(weeks=2)
+    months = {'month': 1, 'quarter': 3, 'halfyear': 6, 'year': 12}.get(step, 1)
+    m = d.month + months
+    y = d.year + (m - 1) // 12
+    m = (m - 1) % 12 + 1
+    return d.replace(year=y, month=m, day=min(d.day, monthrange(y, m)[1]))
+
+
+@login_required
 def exchange_rate_api(request):
     from django.http import JsonResponse
     from datetime import date as date_type

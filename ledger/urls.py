@@ -17,4 +17,7 @@ urlpatterns = [
     path('api/exchange-rate/', views.exchange_rate_api, name='exchange_rate_api'),
     path('accounts/new/', views.account_new, name='account_new'),
     path('accounts/<int:account_id>/edit/', views.account_edit, name='account_edit'),
+    path('reports/networth/', views.networth_report, name='networth_report'),
+    path('reports/networth/data/', views.networth_report_data, name='networth_report_data'),
+    path('reports/saved/', views.saved_reports, name='saved_reports'),
 ]

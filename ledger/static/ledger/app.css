@@ -352,3 +352,292 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .swatch:hover { transform: scale(1.1); }
 .swatch.selected { border-color: var(--text); }
+
+/* ================================================================
+   NET WORTH REPORT
+================================================================ */
+.rpt-layout {
+  display: flex;
+  gap: 22px;
+  align-items: flex-start;
+}
+
+.rpt-config {
+  flex-shrink: 0;
+  width: 320px;
+  position: sticky;
+  top: calc(var(--topnav-height) + var(--tabbar-height) + 20px);
+}
+
+.rpt-output { flex: 1; min-width: 0; }
+
+.rpt-date-row { display: flex; gap: 14px; }
+.rpt-date-row .form-group { flex: 1; }
+
+.date-combo { display: flex; flex-direction: column; gap: 6px; }
+.date-combo select,
+.date-combo input { width: 100%; }
+
+.rpt-run-btn { width: 100%; margin-top: 4px; }
+
+/* Account tree */
+.acct-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.btn-sm {
+  padding: 3px 9px;
+  font-size: .76rem;
+  font-weight: 500;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: background .12s;
+}
+.btn-sm:hover { background: var(--bg); border-color: var(--accent); }
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: .72rem;
+  cursor: pointer;
+  padding: 0 4px;
+  margin-left: 4px;
+  opacity: .7;
+}
+.btn-link:hover { opacity: 1; }
+
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .82rem;
+  cursor: pointer;
+  font-weight: normal;
+  margin: 0;
+  color: var(--text);
+}
+.inline-check input { width: auto; margin: 0; }
+
+.acct-tree {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: #fafcfa;
+  max-height: 340px;
+  overflow-y: auto;
+  padding: 6px 4px;
+  font-size: .82rem;
+}
+
+.acct-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  padding-right: 6px;
+  border-radius: 3px;
+  transition: background .1s;
+}
+.acct-node:hover { background: #edf6ed; }
+.acct-node input[type=checkbox] { width: auto; margin: 0; flex-shrink: 0; cursor: pointer; }
+
+.acct-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-hidden .acct-name { color: var(--text-muted); font-style: italic; }
+.acct-placeholder .acct-name { font-weight: 600; color: var(--text-muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+.acct-chevron { color: var(--text-muted); font-size: .7rem; flex-shrink: 0; }
+
+/* Output area */
+.rpt-output-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.rpt-chart-wrap {
+  position: relative;
+  max-height: 420px;
+}
+
+/* Config collapsed / reconfigure */
+.rpt-layout.config-hidden .rpt-output { flex: 1; }
+.rpt-output-left { display: flex; align-items: center; gap: 12px; }
+.rpt-reconfigure-btn { flex-shrink: 0; }
+
+/* Saved configs (in report page) */
+.rpt-save-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.rpt-save-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.rpt-save-title {
+  font-size: .8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-muted);
+}
+
+.rpt-save-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.rpt-save-row input { flex: 1; }
+
+.saved-configs-list { display: flex; flex-direction: column; gap: 4px; }
+
+.saved-cfg-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 4px;
+  background: #f5faf5;
+  border: 1px solid var(--border);
+}
+
+.saved-cfg-name {
+  flex: 1;
+  font-size: .83rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-sm-del {
+  color: var(--danger);
+  border-color: var(--danger);
+  opacity: .7;
+}
+.btn-sm-del:hover { opacity: 1; background: #fdeaea; }
+
+/* ── Saved Reports page ─────────────────────────────────────── */
+.sr-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  flex-wrap: wrap;
+}
+
+.sr-info { flex: 1; min-width: 0; }
+
+.sr-name {
+  font-weight: 600;
+  font-size: .95rem;
+  margin-bottom: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sr-summary {
+  font-size: .83rem;
+  color: var(--text-muted);
+  margin-bottom: 3px;
+}
+
+.sr-meta {
+  font-size: .75rem;
+  color: var(--text-muted);
+  opacity: .7;
+}
+
+.sr-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; flex-wrap: wrap; }
+
+.sr-actions a.btn-sm { text-decoration: none; }
+
+.sr-divider { border: none; border-top: 1px solid var(--border); margin: 0; }
+
+.sr-empty { color: var(--text-muted); font-size: .9rem; padding: 12px 0; }
+.sr-empty a { color: var(--accent); }
+
+/* Table/export header */
+.rpt-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 0;
+}
+
+.rpt-export-btns { display: flex; gap: 8px; }
+
+/* Responsive */
+@media (max-width: 860px) {
+  .rpt-layout { flex-direction: column; }
+  .rpt-config { width: 100%; position: static; }
+  .rpt-date-row { flex-direction: column; }
+}
+
+/* ── Print / PDF export ─────────────────────────────────────── */
+/* Print header (hidden on screen, shown in print) */
+.print-header { display: none; margin-bottom: 24px; border-bottom: 2px solid #1a3320; padding-bottom: 12px; }
+.print-header-brand { font-size: 11pt; font-weight: 700; color: #1a3320; letter-spacing: .04em; margin-bottom: 6px; }
+.print-header-title { font-size: 20pt; font-weight: 700; color: #000; margin-bottom: 4px; }
+.print-header-meta { font-size: 9pt; color: #555; }
+
+/* ── Print / PDF export ─────────────────────────────────────── */
+@media print {
+  /* Hide all chrome */
+  .topnav, .tabbar, .topbar,
+  .rpt-config, .rpt-save-section,
+  .rpt-output-header .inline-check,
+  .rpt-reconfigure-btn,
+  .rpt-export-btns,
+  #reconfigure-btn { display: none !important; }
+
+  /* Layout */
+  body { background: #fff !important; font-size: 11pt; color: #000; }
+  .main { min-height: unset; }
+  .content { padding: 0 !important; }
+  .rpt-layout { display: block !important; }
+  .rpt-output { display: block !important; }
+
+  /* Cards */
+  .card {
+    box-shadow: none !important;
+    border: 1px solid #ccc !important;
+    border-radius: 4px !important;
+    padding: 16px !important;
+    margin-bottom: 20px !important;
+    page-break-inside: avoid;
+  }
+
+  /* Output header — just the title */
+  .rpt-output-header { margin-bottom: 12px; }
+  .rpt-output-left { gap: 0; }
+  #rpt-output-title { font-size: 16pt !important; }
+
+  /* Chart: canvas sizing handled via JS beforeprint */
+  .rpt-chart-wrap { max-width: 100% !important; overflow: hidden; }
+
+  /* Table */
+  table { font-size: 10pt; }
+  th { font-size: 9pt; }
+  tbody tr:hover td { background: inherit !important; }
+
+  /* Print header (visible only in print) */
+  .print-header { display: block !important; }
+}
