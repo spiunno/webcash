@@ -32,6 +32,10 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
            class="btn" style="padding:6px 14px;font-size:.82rem;background:var(--border);color:var(--text);">
           Edit Account
         </a>
+        <button id="reconcile-btn" type="button" class="btn btn-secondary"
+                style="padding:6px 14px;font-size:.82rem;white-space:nowrap;">
+          Reconcile…
+        </button>
         <button id="new-txn-btn" class="btn btn-primary"
                 style="white-space:nowrap;"
                 data-url="{% url 'transaction_new' account.id %}?partial=1">
@@ -39,6 +43,42 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
         </button>
       </div>
     </div>
+  </div>
+</div>
+
+{# ── Reconcile modal ── #}
+<div id="reconcile-modal" style="display:none;position:fixed;inset:0;z-index:1000;
+     background:rgba(0,0,0,.45);align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:10px;padding:24px 28px;min-width:320px;
+              box-shadow:0 8px 32px rgba(0,0,0,.22);">
+    <div style="font-size:1rem;font-weight:700;margin-bottom:16px;">Reconcile Account</div>
+    <form method="post" action="{% url 'reconcile_start' account.id %}">
+      {% csrf_token %}
+      <div style="display:flex;flex-direction:column;gap:12px;">
+        <label style="font-size:.85rem;font-weight:600;">
+          Statement Date
+          <input type="date" name="statement_date" required
+                 style="display:block;margin-top:4px;width:100%;padding:6px 8px;
+                        border:1px solid var(--border);border-radius:5px;font-size:.88rem;box-sizing:border-box;">
+        </label>
+        <label style="font-size:.85rem;font-weight:600;">
+          Ending Balance
+          <input type="text" name="ending_balance" required placeholder="0.00"
+                 style="display:block;margin-top:4px;width:100%;padding:6px 8px;
+                        border:1px solid var(--border);border-radius:5px;font-size:.88rem;box-sizing:border-box;">
+        </label>
+        <label style="font-size:.85rem;font-weight:600;display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" name="include_subaccounts" style="width:15px;height:15px;cursor:pointer;">
+          Include subaccounts
+        </label>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px;">
+        <button type="button" id="reconcile-modal-cancel"
+                style="padding:7px 16px;border:1px solid var(--border);border-radius:5px;
+                       background:none;cursor:pointer;font-size:.85rem;">Cancel</button>
+        <button type="submit" class="btn btn-primary" style="padding:7px 18px;font-size:.85rem;">OK</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -86,6 +126,7 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
         <th data-col="5" class="sortable amount" data-type="num">Debit <span class="sort-arrow"></span></th>
         <th data-col="6" class="sortable amount" data-type="num">Credit <span class="sort-arrow"></span></th>
         <th data-col="7" class="sortable amount" data-type="num">Balance <span class="sort-arrow"></span></th>
+        <th data-col="8" style="width:34px;text-align:center;" title="Cleared / Reconciled status">Clr</th>
       </tr>
       <tr id="filter-row" style="display:none;">
         <th data-col="0"></th>
@@ -96,6 +137,7 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
         <th data-col="5"><input class="filter-input" data-col="5" placeholder="debit…" style="text-align:right;"></th>
         <th data-col="6"><input class="filter-input" data-col="6" placeholder="credit…" style="text-align:right;"></th>
         <th data-col="7"></th>
+        <th data-col="8"></th>
       </tr>
     </thead>
     <tbody>
@@ -103,7 +145,7 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
       {% with s=row.split txn=row.txn %}
 
       {# ── Main row ── #}
-      <tr class="register-row {% if forloop.counter|divisibleby:2 %}row-even{% endif %}" data-txn="{{ txn.id }}" style="cursor:pointer;">
+      <tr class="register-row {% if forloop.counter|divisibleby:2 %}row-even{% endif %}" data-txn="{{ txn.id }}" data-split="{{ s.id }}" style="cursor:pointer;">
         <td data-col="0" style="text-align:center;color:var(--text-muted);font-size:.6rem;padding-right:0;">
           <span class="expand-icon">▶</span>
         </td>
@@ -123,19 +165,50 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
             data-sort="{{ row.running }}">
           {{ row.running|num:account_prefs }} <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>
         </td>
+        <td data-col="8" style="text-align:center;padding:4px 2px;">
+          {% if s.reconciled %}
+            <span class="clr-badge clr-R" title="Reconciled on {{ s.reconcile_date }}">R</span>
+          {% else %}
+            <span class="clr-badge {% if s.confirmed %}clr-C{% else %}clr-N{% endif %}"
+                  data-split-id="{{ s.id }}"
+                  data-confirmed="{{ s.confirmed|yesno:'1,0' }}"
+                  title="{% if s.confirmed %}Confirmed — click to unconfirm{% else %}Not confirmed — click to confirm{% endif %}"
+                  style="cursor:pointer;">{% if s.confirmed %}C{% else %}n{% endif %}</span>
+          {% endif %}
+        </td>
       </tr>
 
       {# ── Detail row (hidden) ── #}
       <tr class="detail-row" data-for="{{ txn.id }}"
           data-edit-url="{% url 'transaction_edit' txn.id %}?partial=1"
           style="display:none;">
-        <td class="detail-cell" colspan="8" style="padding:0;background:var(--bg);border-bottom:2px solid var(--border);">
+        <td class="detail-cell" colspan="9" style="padding:0;background:var(--bg);border-bottom:2px solid var(--border);">
           <div class="detail-inner">
           <div class="split-detail">
             <div class="split-detail-header">
               <span>{{ txn.post_date|udate:prefs }} &mdash; {{ txn.description|default:"(no description)" }}</span>
-              <button type="button" class="btn btn-primary edit-inline-btn"
-                      style="padding:4px 14px;font-size:.8rem;">Edit</button>
+              <div class="txn-actions">
+                <button type="button" class="btn btn-primary edit-inline-btn"
+                        style="padding:4px 14px;font-size:.8rem;">Edit</button>
+                <form method="post" action="{% url 'transaction_duplicate' txn.id %}" style="display:inline;">
+                  {% csrf_token %}
+                  <input type="hidden" name="back" value="{% url 'account_register' account.id %}">
+                  <button type="submit" class="btn btn-secondary"
+                          style="padding:4px 14px;font-size:.8rem;">Duplicate</button>
+                </form>
+                <form method="post" action="{% url 'transaction_delete' txn.id %}" style="display:inline;"
+                      onsubmit="return confirm('Delete this transaction?');">
+                  {% csrf_token %}
+                  <input type="hidden" name="back" value="{% url 'account_register' account.id %}">
+                  <button type="submit" class="btn btn-danger"
+                          style="padding:4px 14px;font-size:.8rem;">Delete</button>
+                </form>
+                {% if row.other_account_id %}
+                <a href="{% url 'account_register' row.other_account_id %}#txn-{{ txn.id }}"
+                   class="btn btn-secondary"
+                   style="padding:4px 14px;font-size:.8rem;text-decoration:none;">Jump</a>
+                {% endif %}
+              </div>
             </div>
             <table class="split-table">
               <thead>
@@ -258,6 +331,28 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
   /* currency label next to amounts */
   .ccy-tag { font-size: .68rem; opacity: .55; margin-left: 2px; font-weight: 400; }
 
+  /* ── Cleared / Reconciled badges ── */
+  .clr-badge {
+    display: inline-block; width: 18px; height: 18px; line-height: 18px;
+    border-radius: 4px; font-size: .68rem; font-weight: 700; text-align: center;
+    user-select: none;
+  }
+  .clr-N { background: var(--table-alt); color: var(--text-muted); border: 1px solid var(--border); }
+  .clr-N:hover { background: var(--border); color: var(--text); }
+  .clr-C { background: #dbeafe; color: #1d4ed8; border: 1px solid #93c5fd; }
+  .clr-C:hover { background: #bfdbfe; }
+  .clr-R { background: #dcfce7; color: #15803d; border: 1px solid #86efac; cursor: default; }
+
+  /* ── Transaction action buttons ── */
+  .txn-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .btn { display: inline-block; border: none; border-radius: 5px; cursor: pointer; font-weight: 600; }
+  .btn-primary  { background: var(--accent); color: #fff; }
+  .btn-primary:hover  { opacity: .88; }
+  .btn-secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: var(--table-alt); }
+  .btn-danger   { background: var(--danger); color: #fff; }
+  .btn-danger:hover   { opacity: .88; }
+
   /* hidden-col utility — toggled by JS */
   #register-table td.col-hidden,
   #register-table th.col-hidden { display: none; }
@@ -284,6 +379,7 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
     { idx: 5, label: 'Debit'       },
     { idx: 6, label: 'Credit'      },
     { idx: 7, label: 'Balance'     },
+    { idx: 8, label: null          },   // Clr — never toggled
   ];
   // Default: memo hidden
   const hidden = new Set([4]);
@@ -427,7 +523,7 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
   ═══════════════════════════════════════════════════════════ */
   document.querySelectorAll('.register-row').forEach(row => {
     row.addEventListener('click', function (e) {
-      if (e.target.tagName === 'A' || e.target.tagName === 'BUTTON') return;
+      if (e.target.tagName === 'A' || e.target.tagName === 'BUTTON' || e.target.closest('[data-col="8"]')) return;
       const txnId = this.dataset.txn;
       const detail = document.querySelector(`.detail-row[data-for="${txnId}"]`);
       const isOpen = detail.style.display !== 'none';
@@ -439,6 +535,64 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
   function closeAll() {
     document.querySelectorAll('.detail-row').forEach(d => d.style.display = 'none');
     document.querySelectorAll('.register-row').forEach(r => r.classList.remove('expanded'));
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     RECONCILE MODAL
+  ═══════════════════════════════════════════════════════════ */
+  const reconcileBtn   = document.getElementById('reconcile-btn');
+  const reconcileModal = document.getElementById('reconcile-modal');
+  const reconcileCancel = document.getElementById('reconcile-modal-cancel');
+
+  if (reconcileBtn) {
+    reconcileBtn.addEventListener('click', () => {
+      reconcileModal.style.display = 'flex';
+    });
+    reconcileCancel.addEventListener('click', () => {
+      reconcileModal.style.display = 'none';
+    });
+    reconcileModal.addEventListener('click', e => {
+      if (e.target === reconcileModal) reconcileModal.style.display = 'none';
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') reconcileModal.style.display = 'none';
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════════════
+     CONFIRMED TOGGLE (Clr badges)
+  ═══════════════════════════════════════════════════════════ */
+  document.addEventListener('click', async function (e) {
+    const badge = e.target.closest('.clr-badge[data-split-id]');
+    if (!badge) return;
+    e.stopPropagation();
+    const splitId = badge.dataset.splitId;
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+      || getCookie('csrftoken');
+    try {
+      const res = await fetch(`/split/${splitId}/toggle-confirmed/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        badge.dataset.confirmed = data.confirmed ? '1' : '0';
+        if (data.confirmed) {
+          badge.textContent = 'C';
+          badge.className = 'clr-badge clr-C';
+          badge.title = 'Confirmed — click to unconfirm';
+        } else {
+          badge.textContent = 'n';
+          badge.className = 'clr-badge clr-N';
+          badge.title = 'Not confirmed — click to confirm';
+        }
+      }
+    } catch (_) {}
+  });
+
+  function getCookie(name) {
+    const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+    return m ? m.pop() : '';
   }
 
   /* ═══════════════════════════════════════════════════════════

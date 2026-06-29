@@ -102,10 +102,12 @@ def account_register(request, account_id):
         else:
             other_label = '—'
 
+        other_account_id = other_splits[0].account_id if len(other_splits) == 1 else None
         rows.append({
             'split': split,
             'txn': split.transaction,
             'other_label': other_label,
+            'other_account_id': other_account_id,
             'running': running,
             'display_amount': display_amount,
         })
@@ -161,6 +163,57 @@ def import_gnucash(request):
 
 
 # ---------------------------------------------------------------------------
+# Transaction delete / duplicate
+# ---------------------------------------------------------------------------
+
+@login_required
+def transaction_delete(request, txn_id):
+    if request.method != 'POST':
+        from django.http import HttpResponseNotAllowed
+        return HttpResponseNotAllowed(['POST'])
+    txn = get_object_or_404(Transaction, pk=txn_id)
+    back = request.POST.get('back', '')
+    if txn.splits.filter(reconciled=True).exists():
+        messages.error(request, 'This transaction cannot be deleted because it contains reconciled splits.')
+        if back:
+            return redirect(back)
+        return redirect('dashboard')
+    txn.delete()
+    if back:
+        return redirect(back)
+    return redirect('dashboard')
+
+
+@login_required
+def transaction_duplicate(request, txn_id):
+    if request.method != 'POST':
+        from django.http import HttpResponseNotAllowed
+        return HttpResponseNotAllowed(['POST'])
+    from datetime import date
+    txn = get_object_or_404(Transaction, pk=txn_id)
+    back = request.POST.get('back', '')
+    new_txn = Transaction.objects.create(
+        post_date=date.today(),
+        description=txn.description,
+        notes=txn.notes,
+        currency=txn.currency,
+    )
+    for sp in txn.splits.all():
+        Split.objects.create(
+            transaction=new_txn,
+            account=sp.account,
+            memo=sp.memo,
+            value_num=sp.value_num,
+            value_denom=sp.value_denom,
+            quantity_num=sp.quantity_num,
+            quantity_denom=sp.quantity_denom,
+        )
+    if back:
+        return redirect(back)
+    return redirect('dashboard')
+
+
+# ---------------------------------------------------------------------------
 # Transaction edit
 # ---------------------------------------------------------------------------
 
@@ -212,6 +265,9 @@ def transaction_edit(request, txn_id):
 
         if not errors and total != Decimal('0'):
             errors.append(f'Splits are not balanced (sum = {total}). Debits must equal credits.')
+
+        if not errors and txn.splits.filter(reconciled=True).exists():
+            errors.append('This transaction cannot be edited because it contains reconciled splits.')
 
         if not errors:
             from datetime import date as date_type
@@ -397,6 +453,151 @@ def transaction_autocomplete(request, account_id):
         if len(seen) >= 8:
             break
     return JsonResponse({'results': list(seen.values())})
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation
+# ---------------------------------------------------------------------------
+
+def _get_account_ids(account, include_subaccounts=False):
+    ids = [account.pk]
+    if include_subaccounts:
+        def collect(acc):
+            for child in acc.children.all():
+                ids.append(child.pk)
+                collect(child)
+        collect(account)
+    return ids
+
+
+@login_required
+def reconcile_start(request, account_id):
+    if request.method != 'POST':
+        return redirect('account_register', account_id=account_id)
+    statement_date = request.POST.get('statement_date', '').strip()
+    ending_balance = request.POST.get('ending_balance', '').strip()
+    include_subaccounts = request.POST.get('include_subaccounts') == 'on'
+    from datetime import date as date_type
+    try:
+        date_type.fromisoformat(statement_date)
+        Decimal(ending_balance.replace(',', '.'))
+    except Exception:
+        messages.error(request, 'Invalid date or ending balance.')
+        return redirect('account_register', account_id=account_id)
+    request.session[f'reconcile_{account_id}'] = {
+        'statement_date': statement_date,
+        'ending_balance': ending_balance,
+        'include_subaccounts': include_subaccounts,
+    }
+    return redirect('reconcile_view', account_id=account_id)
+
+
+@login_required
+def reconcile_view(request, account_id):
+    account = get_object_or_404(Account, pk=account_id)
+    account_tree = _build_tree()
+    session_key = f'reconcile_{account_id}'
+    params = request.session.get(session_key)
+    if not params:
+        messages.error(request, 'No reconciliation in progress.')
+        return redirect('account_register', account_id=account_id)
+
+    statement_date = params['statement_date']
+    ending_balance = Decimal(params['ending_balance'].replace(',', '.'))
+    include_subaccounts = params.get('include_subaccounts', False)
+
+    account_ids = _get_account_ids(account, include_subaccounts)
+
+    from django.db.models.functions import Coalesce as _C
+    starting_balance = (
+        Split.objects.filter(account_id__in=account_ids, reconciled=True)
+        .aggregate(s=Sum(_C('quantity_num', 'value_num')))['s'] or Decimal('0')
+    ) * account.normal_balance
+
+    splits = (
+        Split.objects
+        .filter(account_id__in=account_ids, reconciled=False,
+                transaction__post_date__lte=statement_date)
+        .select_related('transaction', 'account')
+        .order_by('transaction__post_date', 'transaction__enter_date')
+    )
+
+    base_prefs = UserPreferences.for_user(request.user)
+    funds_in = []
+    funds_out = []
+    for split in splits:
+        amount = split.quantity_num if split.quantity_num is not None else split.value_num
+        display = amount * account.normal_balance
+        item = {
+            'split': split,
+            'txn': split.transaction,
+            'display': display,
+            'abs_display': abs(display),
+        }
+        if display >= 0:
+            funds_in.append(item)
+        else:
+            funds_out.append(item)
+
+    return render(request, 'ledger/reconcile.html', {
+        'account': account,
+        'account_tree': account_tree,
+        'statement_date': statement_date,
+        'ending_balance': ending_balance,
+        'starting_balance': starting_balance,
+        'funds_in': funds_in,
+        'funds_out': funds_out,
+        'prefs': base_prefs,
+    })
+
+
+@login_required
+def reconcile_done(request, account_id):
+    if request.method != 'POST':
+        return redirect('account_register', account_id=account_id)
+    account = get_object_or_404(Account, pk=account_id)
+    session_key = f'reconcile_{account_id}'
+    params = request.session.get(session_key)
+    if not params:
+        return redirect('account_register', account_id=account_id)
+    statement_date = params['statement_date']
+    selected_ids = request.POST.getlist('selected_splits')
+    from datetime import date as date_type
+    rec_date = date_type.fromisoformat(statement_date)
+    updated = Split.objects.filter(pk__in=selected_ids).update(
+        reconciled=True, reconcile_date=rec_date, confirmed=True
+    )
+    del request.session[session_key]
+    messages.success(request, f'Reconciliation complete — {updated} transaction(s) marked as reconciled.')
+    return redirect('account_register', account_id=account_id)
+
+
+@login_required
+def reconcile_postpone(request, account_id):
+    messages.info(request, 'Reconciliation postponed. Your progress has been saved.')
+    return redirect('account_register', account_id=account_id)
+
+
+@login_required
+def reconcile_cancel(request, account_id):
+    session_key = f'reconcile_{account_id}'
+    request.session.pop(session_key, None)
+    return redirect('account_register', account_id=account_id)
+
+
+@login_required
+def split_toggle_confirmed(request, split_id):
+    if request.method != 'POST':
+        from django.http import HttpResponseNotAllowed
+        return HttpResponseNotAllowed(['POST'])
+    split = get_object_or_404(Split, pk=split_id)
+    if split.reconciled:
+        from django.http import JsonResponse
+        return JsonResponse({'error': 'reconciled', 'confirmed': True}, status=400)
+    split.confirmed = not split.confirmed
+    split.save(update_fields=['confirmed'])
+    from django.http import JsonResponse
+    return JsonResponse({'confirmed': split.confirmed})
 
 
 # ---------------------------------------------------------------------------
@@ -876,3 +1077,211 @@ def _build_tree():
     if len(raw_roots) == 1 and (raw_roots[0].placeholder or raw_roots[0].name == 'Root Account'):
         return raw_roots[0].child_list
     return raw_roots
+
+
+# ---------------------------------------------------------------------------
+# Integrity report
+# ---------------------------------------------------------------------------
+
+@login_required
+def integrity_report(request):
+    from datetime import date, timedelta
+    from django.db.models import Count, Q
+    from django.db.models.functions import Coalesce
+
+    today = date.today()
+    issues = []
+
+    # ── 1. Unbalanced transactions ──────────────────────────────────────────
+    all_txns = Transaction.objects.prefetch_related('splits').all()
+    unbalanced = []
+    for txn in all_txns:
+        total = sum(s.value_num for s in txn.splits.all())
+        if abs(total) > Decimal('0.005'):
+            unbalanced.append({'txn': txn, 'detail': f'sum = {total:+.4f}'})
+    if unbalanced:
+        issues.append({
+            'severity': 'error',
+            'title': 'Unbalanced transactions',
+            'description': 'Debits do not equal credits — double-entry integrity is broken.',
+            'items': [
+                {'label': f'{i["txn"].post_date}  {i["txn"].description or "(no description)"}',
+                 'detail': i['detail'],
+                 'url': f'/transaction/{i["txn"].pk}/edit/'}
+                for i in unbalanced
+            ],
+        })
+
+    # ── 2. Transactions with fewer than 2 splits ───────────────────────────
+    lonely = (Transaction.objects
+              .annotate(sc=Count('splits'))
+              .filter(sc__lt=2)
+              .order_by('post_date'))
+    if lonely.exists():
+        issues.append({
+            'severity': 'error',
+            'title': 'Transactions with fewer than 2 splits',
+            'description': 'Every transaction needs at least two splits for double-entry.',
+            'items': [
+                {'label': f'{t.post_date}  {t.description or "(no description)"}',
+                 'detail': f'{t.splits.count()} split(s)',
+                 'url': f'/transaction/{t.pk}/edit/'}
+                for t in lonely
+            ],
+        })
+
+    # ── 3. Splits with zero value ──────────────────────────────────────────
+    zero_splits = (Split.objects
+                   .filter(value_num=0)
+                   .select_related('transaction', 'account')
+                   .order_by('transaction__post_date'))
+    if zero_splits.exists():
+        issues.append({
+            'severity': 'warning',
+            'title': 'Zero-value splits',
+            'description': 'Splits with amount = 0 are usually data entry errors.',
+            'items': [
+                {'label': f'{s.transaction.post_date}  {s.transaction.description or "(no description)"}',
+                 'detail': f'account: {s.account.name}',
+                 'url': f'/transaction/{s.transaction.pk}/edit/'}
+                for s in zero_splits
+            ],
+        })
+
+    # ── 4. Dates far in the past (before 1990) ─────────────────────────────
+    ancient_cutoff = date(1990, 1, 1)
+    ancient = (Transaction.objects
+               .filter(post_date__lt=ancient_cutoff)
+               .order_by('post_date'))
+    if ancient.exists():
+        issues.append({
+            'severity': 'warning',
+            'title': 'Transactions dated before 1990',
+            'description': 'Unusually old dates may indicate import errors.',
+            'items': [
+                {'label': f'{t.post_date}  {t.description or "(no description)"}',
+                 'detail': '',
+                 'url': f'/transaction/{t.pk}/edit/'}
+                for t in ancient
+            ],
+        })
+
+    # ── 5. Future dates ────────────────────────────────────────────────────
+    future = (Transaction.objects
+              .filter(post_date__gt=today)
+              .order_by('post_date'))
+    if future.exists():
+        issues.append({
+            'severity': 'warning',
+            'title': 'Transactions dated in the future',
+            'description': 'Post dates beyond today may be typos.',
+            'items': [
+                {'label': f'{t.post_date}  {t.description or "(no description)"}',
+                 'detail': f'{(t.post_date - today).days} day(s) ahead',
+                 'url': f'/transaction/{t.pk}/edit/'}
+                for t in future
+            ],
+        })
+
+    # ── 6. Missing description ─────────────────────────────────────────────
+    no_desc = (Transaction.objects
+               .filter(Q(description='') | Q(description__isnull=True))
+               .order_by('post_date'))
+    if no_desc.exists():
+        issues.append({
+            'severity': 'info',
+            'title': 'Transactions without a description',
+            'description': 'Empty descriptions make it harder to identify transactions later.',
+            'items': [
+                {'label': f'{t.post_date}  (no description)',
+                 'detail': f'{t.splits.count()} split(s)',
+                 'url': f'/transaction/{t.pk}/edit/'}
+                for t in no_desc
+            ],
+        })
+
+    # ── 7. Splits on placeholder accounts ─────────────────────────────────
+    placeholder_splits = (Split.objects
+                          .filter(account__placeholder=True)
+                          .select_related('transaction', 'account')
+                          .order_by('transaction__post_date'))
+    if placeholder_splits.exists():
+        issues.append({
+            'severity': 'error',
+            'title': 'Splits assigned to placeholder accounts',
+            'description': 'Placeholder accounts are category headers and should not hold transactions.',
+            'items': [
+                {'label': f'{s.transaction.post_date}  {s.transaction.description or "(no description)"}',
+                 'detail': f'account: {s.account.name}',
+                 'url': f'/transaction/{s.transaction.pk}/edit/'}
+                for s in placeholder_splits
+            ],
+        })
+
+    # ── 8. Splits on hidden accounts ───────────────────────────────────────
+    hidden_splits = (Split.objects
+                     .filter(account__hidden=True)
+                     .select_related('transaction', 'account')
+                     .order_by('transaction__post_date'))
+    if hidden_splits.exists():
+        issues.append({
+            'severity': 'info',
+            'title': 'Splits assigned to hidden accounts',
+            'description': 'Hidden accounts are excluded from the sidebar; verify these are intentional.',
+            'items': [
+                {'label': f'{s.transaction.post_date}  {s.transaction.description or "(no description)"}',
+                 'detail': f'account: {s.account.name}',
+                 'url': f'/transaction/{s.transaction.pk}/edit/'}
+                for s in hidden_splits
+            ],
+        })
+
+    # ── 9. Suspense / Imbalance accounts have splits ──────────────────────
+    suspense_splits = (Split.objects
+                       .filter(account__name__icontains='imbalance')
+                       .select_related('transaction', 'account')
+                       .order_by('transaction__post_date'))
+    if suspense_splits.exists():
+        issues.append({
+            'severity': 'error',
+            'title': 'Transactions routed through Imbalance account',
+            'description': 'GnuCash uses an Imbalance account when a transaction could not be balanced on import. These need a real counterpart account.',
+            'items': [
+                {'label': f'{s.transaction.post_date}  {s.transaction.description or "(no description)"}',
+                 'detail': f'account: {s.account.name}  amount: {s.value_num:+.2f}',
+                 'url': f'/transaction/{s.transaction.pk}/edit/'}
+                for s in suspense_splits
+            ],
+        })
+
+    # ── 10. Possible duplicate transactions ────────────────────────────────
+    from collections import defaultdict
+    seen = defaultdict(list)
+    for txn in Transaction.objects.prefetch_related('splits').order_by('post_date'):
+        key = (txn.post_date, (txn.description or '').strip().lower(),
+               abs(sum(s.value_num for s in txn.splits.all() if s.value_num > 0)))
+        seen[key].append(txn)
+    duplicates = [group for group in seen.values() if len(group) > 1]
+    if duplicates:
+        items = []
+        for group in duplicates:
+            for txn in group:
+                items.append({
+                    'label': f'{txn.post_date}  {txn.description or "(no description)"}',
+                    'detail': f'id {txn.pk} — same date, description and amount as {len(group)-1} other(s)',
+                    'url': f'/transaction/{txn.pk}/edit/',
+                })
+        issues.append({
+            'severity': 'warning',
+            'title': 'Possible duplicate transactions',
+            'description': 'Transactions sharing the same date, description and gross amount.',
+            'items': items,
+        })
+
+    account_tree = _build_tree()
+    return render(request, 'ledger/integrity_report.html', {
+        'account_tree': account_tree,
+        'issues': issues,
+        'total_txns': Transaction.objects.count(),
+        'total_splits': Split.objects.count(),
+    })

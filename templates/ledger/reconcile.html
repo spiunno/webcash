@@ -1,0 +1,291 @@
+{% extends 'ledger/base.html' %}
+{% load ledger_tags %}
+{% block title %}Reconcile {{ account.name }} — WebCash{% endblock %}
+{% block tab_script %}
+window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|escapejs }}', url:'{% url "account_register" account.id %}', closeable:true};
+{% endblock %}
+{% block breadcrumb %}
+  <a href="{% url 'dashboard' %}" style="color:inherit;text-decoration:none;">Dashboard</a>
+  &rsaquo; <a href="{% url 'account_register' account.id %}" style="color:inherit;text-decoration:none;">{{ account.full_path }}</a>
+  &rsaquo; Reconcile
+{% endblock %}
+
+{% block content %}
+<style>
+  .rec-page { display: flex; flex-direction: column; gap: 12px; }
+
+  .rec-topbar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .rec-topbar h2 { margin: 0; font-size: 1rem; font-weight: 700; flex: 1; }
+
+  .rec-columns {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  }
+  .rec-panel {
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  .rec-panel-header {
+    padding: 8px 14px; font-size: .78rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .06em;
+    background: var(--table-alt); border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .rec-panel-header.in  { color: var(--success); }
+  .rec-panel-header.out { color: var(--danger); }
+
+  .rec-table { width: 100%; border-collapse: collapse; font-size: .84rem; }
+  .rec-table th {
+    background: none; padding: 5px 10px; font-size: .72rem; font-weight: 600;
+    color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em;
+    border-bottom: 1px solid var(--border); text-align: left;
+  }
+  .rec-table th.amount { text-align: right; }
+  .rec-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .rec-table tr:last-child td { border-bottom: none; }
+  .rec-table tr:hover td { background: var(--table-alt); }
+  .rec-table td.amount { text-align: right; font-variant-numeric: tabular-nums; }
+  .rec-table td.chk { width: 28px; text-align: center; padding: 6px 6px; }
+  .rec-table input[type=checkbox] { cursor: pointer; width: 15px; height: 15px; accent-color: var(--accent); }
+
+  .rec-total-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 10px; font-size: .82rem; font-weight: 600;
+    background: var(--table-alt); border-top: 2px solid var(--border);
+  }
+  .rec-total-row .label { color: var(--text-muted); font-weight: 400; }
+
+  .rec-indicators {
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 18px;
+    display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px;
+    align-items: center; font-size: .88rem;
+    background: var(--bg);
+  }
+  .rec-indicators .ind-label { color: var(--text-muted); font-weight: 500; }
+  .rec-indicators .ind-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .diff-positive { color: var(--success); }
+  .diff-negative { color: var(--danger); }
+  .diff-zero     { color: var(--text); }
+
+  #rec-done-btn {
+    padding: 8px 24px; font-size: .9rem;
+    background: var(--success); color: #fff; border: none; border-radius: 6px;
+    cursor: pointer; font-weight: 700; display: none;
+  }
+  #rec-done-btn:hover { opacity: .88; }
+
+  .btn-postpone {
+    padding: 6px 16px; font-size: .82rem;
+    background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
+    cursor: pointer; font-weight: 600; color: var(--text);
+  }
+  .btn-postpone:hover { background: var(--table-alt); }
+  .btn-cancel {
+    padding: 6px 16px; font-size: .82rem;
+    background: none; border: 1px solid var(--border); border-radius: 5px;
+    cursor: pointer; color: var(--text-muted);
+  }
+  .btn-cancel:hover { color: var(--danger); border-color: var(--danger); }
+
+  .rec-empty { padding: 16px 10px; color: var(--text-muted); font-size: .85rem; font-style: italic; }
+  .ccy-tag { font-size: .68rem; opacity: .55; margin-left: 2px; }
+</style>
+
+<form method="post" action="{% url 'reconcile_done' account.id %}" id="rec-form">
+{% csrf_token %}
+
+<div class="rec-page">
+
+  {# ── Top action bar ── #}
+  <div class="rec-topbar">
+    <h2>Reconcile: {{ account.name }}</h2>
+    <a href="{% url 'reconcile_postpone' account.id %}" class="btn-postpone">Postpone</a>
+    <a href="{% url 'reconcile_cancel' account.id %}" class="btn-cancel">Cancel</a>
+    <button type="submit" id="rec-done-btn">✓ Done</button>
+  </div>
+
+  {# ── Two columns ── #}
+  <div class="rec-columns">
+
+    {# ── Funds In ── #}
+    <div class="rec-panel">
+      <div class="rec-panel-header in">
+        <span>Funds In</span>
+        <span id="in-count" style="font-size:.7rem;font-weight:400;color:var(--text-muted);">0 selected</span>
+      </div>
+      <table class="rec-table">
+        <thead>
+          <tr>
+            <th class="chk"><input type="checkbox" id="chk-all-in" title="Select all"></th>
+            <th>Date</th>
+            <th>Description</th>
+            <th class="amount">Amount</th>
+          </tr>
+        </thead>
+        <tbody id="in-body">
+          {% for item in funds_in %}
+          <tr>
+            <td class="chk">
+              <input type="checkbox" name="selected_splits" value="{{ item.split.id }}"
+                     class="rec-chk in-chk" data-amount="{{ item.display }}">
+            </td>
+            <td style="white-space:nowrap;color:var(--text-muted);font-size:.8rem;">
+              {{ item.txn.post_date|date:'Y-m-d' }}
+            </td>
+            <td>{{ item.txn.description|default:"—" }}</td>
+            <td class="amount positive">
+              {{ item.abs_display|floatformat:2 }}
+              <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" class="rec-empty">No funds-in transactions pending.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="rec-total-row">
+        <span class="label">Selected total:</span>
+        <span id="in-total" style="color:var(--success);">0.00 <span class="ccy-tag">{{ account.commodity_mnemonic }}</span></span>
+      </div>
+    </div>
+
+    {# ── Funds Out ── #}
+    <div class="rec-panel">
+      <div class="rec-panel-header out">
+        <span>Funds Out</span>
+        <span id="out-count" style="font-size:.7rem;font-weight:400;color:var(--text-muted);">0 selected</span>
+      </div>
+      <table class="rec-table">
+        <thead>
+          <tr>
+            <th class="chk"><input type="checkbox" id="chk-all-out" title="Select all"></th>
+            <th>Date</th>
+            <th>Description</th>
+            <th class="amount">Amount</th>
+          </tr>
+        </thead>
+        <tbody id="out-body">
+          {% for item in funds_out %}
+          <tr>
+            <td class="chk">
+              <input type="checkbox" name="selected_splits" value="{{ item.split.id }}"
+                     class="rec-chk out-chk" data-amount="{{ item.display }}">
+            </td>
+            <td style="white-space:nowrap;color:var(--text-muted);font-size:.8rem;">
+              {{ item.txn.post_date|date:'Y-m-d' }}
+            </td>
+            <td>{{ item.txn.description|default:"—" }}</td>
+            <td class="amount negative">
+              {{ item.abs_display|floatformat:2 }}
+              <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="4" class="rec-empty">No funds-out transactions pending.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="rec-total-row">
+        <span class="label">Selected total:</span>
+        <span id="out-total" style="color:var(--danger);">0.00 <span class="ccy-tag">{{ account.commodity_mnemonic }}</span></span>
+      </div>
+    </div>
+
+  </div>{# /rec-columns #}
+
+  {# ── Summary indicators ── #}
+  <div class="rec-indicators">
+    <span class="ind-label">Statement Date:</span>
+    <span class="ind-value">{{ statement_date }}</span>
+
+    <span class="ind-label">Starting Balance:</span>
+    <span class="ind-value">
+      {{ starting_balance|floatformat:2 }}
+      <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>
+    </span>
+
+    <span class="ind-label">Ending Balance (statement):</span>
+    <span class="ind-value">
+      {{ ending_balance|floatformat:2 }}
+      <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>
+    </span>
+
+    <span class="ind-label">Reconciled Balance:</span>
+    <span class="ind-value" id="rec-balance">
+      {{ starting_balance|floatformat:2 }}
+      <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>
+    </span>
+
+    <span class="ind-label">Difference:</span>
+    <span class="ind-value" id="rec-diff">
+      {{ ending_balance|floatformat:2 }}
+      <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>
+    </span>
+  </div>
+
+</div>{# /rec-page #}
+</form>
+
+<script>
+(function () {
+  const START  = {{ starting_balance|stringformat:'f' }};
+  const ENDING = {{ ending_balance|stringformat:'f' }};
+  const CCY    = '{{ account.commodity_mnemonic|escapejs }}';
+
+  function fmt(n) {
+    return n.toFixed(2) + ' <span class="ccy-tag">' + CCY + '</span>';
+  }
+
+  function recompute() {
+    let inTotal = 0, inCount = 0;
+    document.querySelectorAll('.in-chk:checked').forEach(cb => {
+      inTotal += parseFloat(cb.dataset.amount) || 0;
+      inCount++;
+    });
+    let outTotal = 0, outCount = 0;
+    document.querySelectorAll('.out-chk:checked').forEach(cb => {
+      outTotal += Math.abs(parseFloat(cb.dataset.amount) || 0);
+      outCount++;
+    });
+
+    document.getElementById('in-total').innerHTML  = inTotal.toFixed(2)  + ' <span class="ccy-tag">' + CCY + '</span>';
+    document.getElementById('out-total').innerHTML = outTotal.toFixed(2) + ' <span class="ccy-tag">' + CCY + '</span>';
+    document.getElementById('in-count').textContent  = inCount  + ' selected';
+    document.getElementById('out-count').textContent = outCount + ' selected';
+
+    const reconciledBalance = START + inTotal - outTotal;
+    const diff = ENDING - reconciledBalance;
+
+    document.getElementById('rec-balance').innerHTML = reconciledBalance.toFixed(2) + ' <span class="ccy-tag">' + CCY + '</span>';
+
+    const diffEl = document.getElementById('rec-diff');
+    const sign = diff > 0 ? '+' : '';
+    diffEl.innerHTML = sign + diff.toFixed(2) + ' <span class="ccy-tag">' + CCY + '</span>';
+    diffEl.className = 'ind-value ' + (diff < -0.005 ? 'diff-negative' : diff > 0.005 ? 'diff-positive' : 'diff-zero');
+
+    const doneBtn = document.getElementById('rec-done-btn');
+    doneBtn.style.display = Math.abs(diff) < 0.005 ? '' : 'none';
+  }
+
+  // Individual checkboxes
+  document.querySelectorAll('.rec-chk').forEach(cb => cb.addEventListener('change', recompute));
+
+  // Select-all for Funds In
+  document.getElementById('chk-all-in').addEventListener('change', function () {
+    document.querySelectorAll('.in-chk').forEach(cb => { cb.checked = this.checked; });
+    recompute();
+  });
+
+  // Select-all for Funds Out
+  document.getElementById('chk-all-out').addEventListener('change', function () {
+    document.querySelectorAll('.out-chk').forEach(cb => { cb.checked = this.checked; });
+    recompute();
+  });
+
+  recompute();
+})();
+</script>
+{% endblock %}

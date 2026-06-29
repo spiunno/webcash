@@ -7,8 +7,9 @@
 | Python | 3.9 or later | `python3 --version` |
 | pip | any recent | comes with Python |
 | Git | any | to clone the repo |
+| PostgreSQL | 12 or later | optional — SQLite is used by default |
 
-No database server, no Node.js, no Docker required.
+No Node.js, no Docker required.
 
 ## 1. Clone the repository
 
@@ -27,27 +28,48 @@ source .venv/bin/activate      # Windows: .venv\Scripts\activate
 ## 3. Install dependencies
 
 ```bash
-pip install django==4.2
+pip install -r requirements.txt
 ```
 
-There are no other runtime dependencies — the GnuCash importer uses Python's stdlib `xml.etree.ElementTree` and `gzip`.
+This installs Django and `psycopg2-binary` (the PostgreSQL driver, harmless if you stay on SQLite).
 
-To pin the exact version for reproducibility:
+## 4. Choose a database
+
+### Option A — SQLite (default, zero config)
+
+Nothing to do. Skip to step 5.
+
+### Option B — PostgreSQL
+
+**4a.** Create the database:
 
 ```bash
-pip freeze > requirements.txt   # save
-pip install -r requirements.txt # restore
+createdb webcash
 ```
 
-## 4. Apply database migrations
+**4b.** Export the connection URL before running any `manage.py` command:
+
+```bash
+export DATABASE_URL=postgres://your_user:your_password@localhost:5432/webcash
+```
+
+If your PostgreSQL uses peer/trust auth (no password needed), omit the password:
+
+```bash
+export DATABASE_URL=postgres://your_user@localhost:5432/webcash
+```
+
+Add this `export` to your shell profile (`.zshrc`, `.bashrc`, etc.) or to a `.env` file you source before running the app, so you don't have to repeat it every session.
+
+## 5. Apply database migrations
 
 ```bash
 python manage.py migrate
 ```
 
-This creates `db.sqlite3` in the project root with all tables.
+With SQLite this creates `db.sqlite3` in the project root. With PostgreSQL it populates the database you created above.
 
-## 5. Create user accounts
+## 6. Create user accounts
 
 WebCash ships without any users. Create the two household accounts:
 
@@ -68,7 +90,7 @@ User.objects.create_user('wife',    password='choose-a-strong-password')
 
 Both users share the same ledger. There is no data separation between them.
 
-## 6. (Optional) Load sample data
+## 7. (Optional) Load sample data
 
 If you have a GnuCash file, you can import it from the command line before
 starting the server:

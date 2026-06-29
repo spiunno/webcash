@@ -1,6 +1,6 @@
 # WebCash
 
-A self-hosted family finance ledger inspired by GnuCash, built with Django and SQLite.
+A self-hosted family finance ledger inspired by GnuCash, built with Django. Supports SQLite (default) and PostgreSQL.
 
 - Double-entry bookkeeping with accounts, transactions, and splits
 - GnuCash XML file import (plain or gzip-compressed)
@@ -13,7 +13,7 @@ A self-hosted family finance ledger inspired by GnuCash, built with Django and S
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
-pip install django==4.2
+pip install -r requirements.txt
 python manage.py migrate
 python manage.py createsuperuser --username husband
 python manage.py runserver

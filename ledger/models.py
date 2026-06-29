@@ -74,7 +74,7 @@ class Account(models.Model):
     code = models.CharField(max_length=32, blank=True)
     account_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     commodity_namespace = models.CharField(max_length=20, choices=NAMESPACE_CHOICES, default=NAMESPACE_CURRENCY)
-    commodity_mnemonic = models.CharField(max_length=10, default='EUR')
+    commodity_mnemonic = models.CharField(max_length=32, default='EUR')
     smallest_fraction = models.IntegerField(default=100)
     parent = models.ForeignKey(
         'self', null=True, blank=True, on_delete=models.SET_NULL, related_name='children'
@@ -115,7 +115,7 @@ class Transaction(models.Model):
     enter_date = models.DateTimeField(auto_now_add=True)
     description = models.CharField(max_length=2048, blank=True)
     notes = models.TextField(blank=True)
-    currency = models.CharField(max_length=10, default='USD')
+    currency = models.CharField(max_length=32, default='USD')
 
     class Meta:
         ordering = ['-post_date', '-enter_date']
@@ -139,6 +139,7 @@ class Split(models.Model):
     quantity_num = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
     reconciled = models.BooleanField(default=False)
     reconcile_date = models.DateField(null=True, blank=True)
+    confirmed = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['transaction__post_date']
@@ -156,7 +157,7 @@ class Price(models.Model):
     """Exchange rate or security price: 1 unit of commodity_mnemonic = value_num units of currency."""
     commodity_namespace = models.CharField(max_length=20, default='CURRENCY')
     commodity_mnemonic = models.CharField(max_length=20)
-    currency = models.CharField(max_length=10)
+    currency = models.CharField(max_length=32)
     date = models.DateField()
     value_num = models.DecimalField(max_digits=18, decimal_places=6)
     source = models.CharField(max_length=20, default='automatic')  # 'automatic' or 'user'

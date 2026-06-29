@@ -1,0 +1,116 @@
+{% extends "ledger/base.html" %}
+
+{% block title %}Integrity Check — WebCash{% endblock %}
+
+{% block tab_script %}
+window.CURRENT_TAB = {id:'integrity-report', label:'Integrity Check', url:'{% url "integrity_report" %}', closeable:true};
+{% endblock %}
+
+{% block breadcrumb %}Reports &rsaquo; Integrity Check{% endblock %}
+
+{% block content %}
+<div style="max-width:900px;">
+
+  <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:20px;">
+    <h2 style="margin:0;font-size:1.25rem;">Database Integrity Check</h2>
+    <span style="font-size:.8rem;color:var(--text-muted);">
+      {{ total_txns }} transaction{{ total_txns|pluralize }} · {{ total_splits }} split{{ total_splits|pluralize }}
+    </span>
+  </div>
+
+  {% if not issues %}
+  <div class="card" style="padding:32px;text-align:center;">
+    <div style="font-size:2rem;margin-bottom:8px;">✓</div>
+    <div style="font-size:1.1rem;font-weight:600;color:var(--success);">No issues found</div>
+    <div style="color:var(--text-muted);margin-top:6px;font-size:.88rem;">
+      All {{ total_txns }} transactions passed every integrity check.
+    </div>
+  </div>
+
+  {% else %}
+
+  {# Summary bar #}
+  {% with errors=0 warnings=0 infos=0 %}
+  <div class="card" style="padding:14px 20px;margin-bottom:20px;display:flex;gap:24px;align-items:center;">
+    {% for issue in issues %}
+      {% if issue.severity == 'error' %}
+        <span style="color:var(--danger);font-weight:600;">
+          ✕ {{ issue.items|length }} {{ issue.title|lower }}
+        </span>
+      {% elif issue.severity == 'warning' %}
+        <span style="color:var(--warning,#d97706);font-weight:600;">
+          ⚠ {{ issue.items|length }} {{ issue.title|lower }}
+        </span>
+      {% else %}
+        <span style="color:var(--text-muted);font-weight:600;">
+          ℹ {{ issue.items|length }} {{ issue.title|lower }}
+        </span>
+      {% endif %}
+    {% endfor %}
+  </div>
+  {% endwith %}
+
+  {# Issue cards #}
+  {% for issue in issues %}
+  <div class="card" style="margin-bottom:16px;padding:0;overflow:hidden;">
+
+    {# Header #}
+    <div style="
+      padding:12px 18px;
+      display:flex;align-items:center;gap:10px;
+      border-bottom:1px solid var(--border);
+      {% if issue.severity == 'error' %}background:color-mix(in srgb,var(--danger) 8%,transparent);{% endif %}
+      {% if issue.severity == 'warning' %}background:color-mix(in srgb,#d97706 8%,transparent);{% endif %}
+    ">
+      {% if issue.severity == 'error' %}
+        <span style="font-size:1.1rem;color:var(--danger);">✕</span>
+        <span style="font-weight:700;color:var(--danger);">{{ issue.title }}</span>
+        <span style="margin-left:auto;font-size:.78rem;color:var(--danger);opacity:.8;">{{ issue.items|length }} issue{{ issue.items|length|pluralize }}</span>
+      {% elif issue.severity == 'warning' %}
+        <span style="font-size:1.1rem;color:#d97706;">⚠</span>
+        <span style="font-weight:700;color:#d97706;">{{ issue.title }}</span>
+        <span style="margin-left:auto;font-size:.78rem;color:#d97706;opacity:.8;">{{ issue.items|length }} issue{{ issue.items|length|pluralize }}</span>
+      {% else %}
+        <span style="font-size:1.1rem;color:var(--accent);">ℹ</span>
+        <span style="font-weight:700;color:var(--accent);">{{ issue.title }}</span>
+        <span style="margin-left:auto;font-size:.78rem;color:var(--accent);opacity:.8;">{{ issue.items|length }} issue{{ issue.items|length|pluralize }}</span>
+      {% endif %}
+    </div>
+
+    <div style="padding:10px 18px 6px;font-size:.82rem;color:var(--text-muted);border-bottom:1px solid var(--border);">
+      {{ issue.description }}
+    </div>
+
+    {# Item list — show first 50, collapse the rest #}
+    <div class="ir-items" id="ir-block-{{ forloop.counter }}">
+      {% for item in issue.items %}
+      {% if forloop.counter <= 50 %}
+      <div style="
+        display:flex;align-items:baseline;gap:8px;
+        padding:7px 18px;font-size:.83rem;
+        border-bottom:{% if not forloop.last %}1px solid var(--border){% else %}none{% endif %};
+      ">
+        <a href="{{ item.url }}" style="color:var(--text);text-decoration:none;flex:1;min-width:0;
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+           title="{{ item.label }}">{{ item.label }}</a>
+        {% if item.detail %}
+        <span style="font-size:.77rem;color:var(--text-muted);white-space:nowrap;">{{ item.detail }}</span>
+        {% endif %}
+        <a href="{{ item.url }}" style="font-size:.75rem;color:var(--accent);white-space:nowrap;">Edit →</a>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+
+    {% if issue.items|length > 50 %}
+    <div style="padding:8px 18px;font-size:.8rem;color:var(--text-muted);border-top:1px solid var(--border);">
+      … and {{ issue.items|length|add:"-50" }} more (showing first 50)
+    </div>
+    {% endif %}
+
+  </div>
+  {% endfor %}
+
+  {% endif %}
+</div>
+{% endblock %}
