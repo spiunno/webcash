@@ -7,6 +7,8 @@ window.CURRENT_TAB = {id:'dashboard', label:'Dashboard', url:'{% url "dashboard"
 {% block breadcrumb %}Dashboard{% endblock %}
 
 {% block content %}
+<div id="dashboard-widgets"></div>
+
 <div class="summary-grid">
   <div class="summary-card">
     <div class="label">Net Worth</div>
@@ -82,4 +84,165 @@ window.CURRENT_TAB = {id:'dashboard', label:'Dashboard', url:'{% url "dashboard"
   <p style="color:#7f8fa4;font-size:.9rem;">No transactions yet. <a href="{% url 'import_gnucash' %}">Import a GnuCash file</a> to get started.</p>
   {% endif %}
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script>
+const CFG_KEY  = 'webcash_nw_configs_v1';
+const DATA_URL = '{% url "networth_report_data" %}';
+const RPT_URL  = '{% url "networth_report" %}';
+
+function fmtDate(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+function getPreset(p) {
+  const n = new Date(), y = n.getFullYear(), mo = n.getMonth();
+  switch(p) {
+    case 'today':              return fmtDate(n);
+    case 'start_month':        return fmtDate(new Date(y, mo, 1));
+    case 'end_month':          return fmtDate(new Date(y, mo+1, 0));
+    case 'start_prev_month':   return fmtDate(new Date(y, mo-1, 1));
+    case 'end_prev_month':     return fmtDate(new Date(y, mo, 0));
+    case 'start_quarter':      { const q=Math.floor(mo/3); return fmtDate(new Date(y, q*3, 1)); }
+    case 'end_quarter':        { const q=Math.floor(mo/3); return fmtDate(new Date(y, q*3+3, 0)); }
+    case 'start_prev_quarter': { const q=Math.floor(mo/3)-1, py=q<0?y-1:y, pm=((q%4+4)%4)*3; return fmtDate(new Date(py,pm,1)); }
+    case 'end_prev_quarter':   { const q=Math.floor(mo/3); return fmtDate(new Date(y, q*3, 0)); }
+    case 'start_year':         return fmtDate(new Date(y, 0, 1));
+    case 'end_year':           return fmtDate(new Date(y, 11, 31));
+    case 'start_prev_year':    return fmtDate(new Date(y-1, 0, 1));
+    case 'end_prev_year':      return fmtDate(new Date(y-1, 11, 31));
+    default: return '';
+  }
+}
+function resolveDate(preset, custom) { return preset ? getPreset(preset) : (custom || ''); }
+
+function fmtAmt(v, cur) {
+  if (v === null || v === undefined) return '—';
+  try {
+    return new Intl.NumberFormat(navigator.language, {
+      style:'currency', currency:cur, minimumFractionDigits:0, maximumFractionDigits:0,
+    }).format(v);
+  } catch { return Number(v).toFixed(0) + ' ' + cur; }
+}
+
+function unpin(id) {
+  const configs = JSON.parse(localStorage.getItem(CFG_KEY) || '[]');
+  const idx = configs.findIndex(c => c.id === id);
+  if (idx !== -1) { configs[idx].pinned = false; localStorage.setItem(CFG_KEY, JSON.stringify(configs)); }
+  renderWidgets();
+}
+
+const widgetCharts = {};
+
+async function loadWidget(cfg, container) {
+  const p = cfg.params;
+  const start = resolveDate(p.startPreset, p.startDate);
+  const end   = resolveDate(p.endPreset,   p.endDate);
+  const ids   = (p.accountIds || []).join(',');
+
+  if (!start || !end || !ids) {
+    container.querySelector('.widget-chart-wrap').innerHTML = '<p class="widget-error">Incomplete configuration</p>';
+    return;
+  }
+
+  const url = `${DATA_URL}?start=${start}&end=${end}&step=${p.step||'month'}&currency=${p.currency||'EUR'}&accounts=${ids}`;
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+
+    const wrap = container.querySelector('.widget-chart-wrap');
+    const canvas = document.createElement('canvas');
+    wrap.innerHTML = '';
+    wrap.appendChild(canvas);
+
+    if (widgetCharts[cfg.id]) widgetCharts[cfg.id].destroy();
+    const cur = p.currency || 'EUR';
+    widgetCharts[cfg.id] = new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: data.dates,
+        datasets: [{
+          label: 'Net Worth',
+          data: data.net_worth,
+          backgroundColor: data.net_worth.map(v => v >= 0 ? 'rgba(74,146,56,0.8)' : 'rgba(192,57,43,0.8)'),
+          borderColor:     data.net_worth.map(v => v >= 0 ? 'rgba(74,146,56,1)'   : 'rgba(192,57,43,1)'),
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: c => fmtAmt(c.raw, cur) } },
+        },
+        scales: {
+          x: { ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 6, font: {size: 10} } },
+          y: { ticks: { callback: v => fmtAmt(v, cur), font: {size: 10} } },
+        },
+      },
+    });
+
+    container.querySelector('.widget-subtitle').textContent = `${start} → ${end}`;
+
+  } catch(e) {
+    container.querySelector('.widget-chart-wrap').innerHTML =
+      `<p class="widget-error">Error: ${e.message}</p>`;
+  }
+}
+
+function renderWidgets() {
+  const configs = JSON.parse(localStorage.getItem(CFG_KEY) || '[]');
+  const pinned  = configs.filter(c => c.pinned);
+  const root    = document.getElementById('dashboard-widgets');
+
+  if (!pinned.length) { root.innerHTML = ''; return; }
+
+  root.innerHTML = `
+    <div class="widget-section-header">
+      <span class="card-title" style="margin:0">Report Widgets</span>
+      <a href="${RPT_URL}" class="btn-link" style="font-size:.85rem">+ Add widget</a>
+    </div>
+    <div class="widget-grid">
+      ${pinned.map(cfg => `
+        <div class="card widget-card" id="widget-${cfg.id}">
+          <div class="widget-header">
+            <div>
+              <div class="widget-title">${cfg.name}</div>
+              <div class="widget-subtitle">${cfg.params.currency || 'EUR'}</div>
+            </div>
+            <div class="widget-actions">
+              <a href="${RPT_URL}?load=${cfg.id}&run=1" class="btn-sm" title="Open full report">↗</a>
+              <button class="btn-sm btn-sm-del" onclick="unpin('${cfg.id}')" title="Remove from dashboard">✕</button>
+            </div>
+          </div>
+          <div class="widget-chart-wrap"><div class="widget-loading">Loading…</div></div>
+        </div>
+      `).join('')}
+    </div>`;
+
+  pinned.forEach(cfg => loadWidget(cfg, document.getElementById('widget-' + cfg.id)));
+}
+
+renderWidgets();
+</script>
+<style>
+.widget-section-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;
+}
+.widget-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px; margin-bottom: 24px;
+}
+.widget-card { padding: 16px; }
+.widget-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+.widget-title  { font-weight: 600; font-size: .95rem; }
+.widget-subtitle { font-size: .78rem; color: #7f8fa4; margin-top: 2px; }
+.widget-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.widget-chart-wrap { height: 180px; }
+.widget-loading { display: flex; align-items: center; justify-content: center; height: 100%; color: #7f8fa4; font-size: .85rem; }
+.widget-error   { color: #b52a2a; font-size: .82rem; padding: 8px 0; }
+</style>
 {% endblock %}

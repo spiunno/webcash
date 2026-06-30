@@ -10,6 +10,80 @@ window.CURRENT_TAB = {id:'accounts', label:'Accounts', url:'{% url "accounts_ove
 {% block content %}
 <style>
   .acc-row:hover .acc-edit-btn { opacity: 1 !important; }
+
+  /* Hierarchy tree lines */
+  .acc-indent {
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
+  .acc-tree-guides {
+    display: flex;
+    align-items: stretch;
+    flex-shrink: 0;
+  }
+  .acc-tree-guide {
+    width: 20px;
+    flex-shrink: 0;
+    position: relative;
+  }
+  /* vertical line for intermediate depths */
+  .acc-tree-guide.has-more::before {
+    content: '';
+    position: absolute;
+    left: 9px;
+    top: 0; bottom: 0;
+    border-left: 1px solid var(--border);
+  }
+  /* L-shaped connector for current item */
+  .acc-tree-guide.connector::before {
+    content: '';
+    position: absolute;
+    left: 9px;
+    top: 0; bottom: 50%;
+    border-left: 1px solid var(--border);
+  }
+  .acc-tree-guide.connector::after {
+    content: '';
+    position: absolute;
+    left: 9px; right: 0;
+    top: 50%;
+    border-top: 1px solid var(--border);
+  }
+  .acc-toggle {
+    cursor: pointer;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 3px;
+    font-size: .6rem;
+    color: var(--accent);
+    transition: transform .15s, background .1s;
+    margin-right: 4px;
+  }
+  .acc-toggle:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .acc-leaf-dot {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 4px;
+  }
+  .acc-leaf-dot::after {
+    content: '';
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--border);
+  }
+  /* depth-level row styling */
+  .acc-row[data-depth="0"] { background: color-mix(in srgb, var(--accent) 4%, transparent); }
+  .acc-row[data-depth="0"] td:first-child { border-left: 3px solid var(--accent); }
+  .acc-row[data-depth="1"] td:first-child { border-left: 3px solid transparent; }
 </style>
 <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
   <a href="{% url 'account_new' %}" class="btn btn-primary">+ New Account</a>
@@ -34,18 +108,31 @@ window.CURRENT_TAB = {id:'accounts', label:'Accounts', url:'{% url "accounts_ove
           data-depth="{{ row.depth }}"
           data-has-children="{% if row.has_children %}true{% else %}false{% endif %}"
           style="{% if row.depth >= 2 %}display:none;{% endif %}">
-        <td>
-          <div style="display:flex;align-items:center;padding-left:{{ row.depth }}em;">
-            {% if row.has_children %}
-            <span class="acc-toggle" style="cursor:pointer;font-size:.55rem;color:var(--text-muted);
-                  width:14px;flex-shrink:0;transition:transform .15s;display:inline-block;
-                  {% if row.depth < 1 %}transform:rotate(90deg);{% endif %}">▶</span>
+        <td style="padding-left:0;">
+          <div class="acc-indent">
+            {# Tree guide lines for each ancestor level #}
+            {% if row.depth > 0 %}
+            <div class="acc-tree-guides">
+              {# spacer for depth-0 column (the root border takes care of it) #}
+              {% for i in row.ancestor_has_more %}
+              <div class="acc-tree-guide {% if i %}has-more{% endif %}"></div>
+              {% endfor %}
+              <div class="acc-tree-guide connector"></div>
+            </div>
             {% else %}
-            <span style="width:14px;display:inline-block;flex-shrink:0;"></span>
+            <div style="width:8px;flex-shrink:0;"></div>
             {% endif %}
+
+            {% if row.has_children %}
+            <span class="acc-toggle"
+                  style="{% if row.depth < 1 %}transform:rotate(90deg);{% endif %}">▶</span>
+            {% else %}
+            <span class="acc-leaf-dot"></span>
+            {% endif %}
+
             <a href="{% url 'account_register' acc.id %}"
-               style="color:var(--text);text-decoration:none;font-size:.88rem;
-                      {% if row.depth == 0 %}font-weight:700;{% elif row.depth == 1 %}font-weight:600;{% endif %}"
+               style="color:var(--text);text-decoration:none;
+                      {% if row.depth == 0 %}font-size:.9rem;font-weight:700;{% elif row.depth == 1 %}font-size:.87rem;font-weight:600;{% else %}font-size:.85rem;{% endif %}"
                class="acc-name-link">{{ acc.name }}</a>
           </div>
         </td>

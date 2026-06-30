@@ -695,12 +695,21 @@ def accounts_overview(request):
         a.cum_balance = cum_balance(a.pk) * a.normal_balance
 
     # Flatten tree with depth
-    def flatten(nodes, depth=0):
+    def flatten(nodes, depth=0, ancestor_has_more=None):
+        if ancestor_has_more is None:
+            ancestor_has_more = []
         result = []
-        for node in sorted(nodes, key=lambda x: x.name):
-            result.append({'account': node, 'depth': depth, 'has_children': bool(node.child_list)})
+        sorted_nodes = sorted(nodes, key=lambda x: x.name)
+        for i, node in enumerate(sorted_nodes):
+            is_last = (i == len(sorted_nodes) - 1)
+            result.append({
+                'account': node,
+                'depth': depth,
+                'has_children': bool(node.child_list),
+                'ancestor_has_more': list(ancestor_has_more),
+            })
             if node.child_list:
-                result.extend(flatten(node.child_list, depth + 1))
+                result.extend(flatten(node.child_list, depth + 1, ancestor_has_more + [not is_last]))
         return result
 
     raw_roots = [a for a in all_accounts if a.parent_id is None]

@@ -379,6 +379,15 @@ function deleteConfig(id) {
   renderSavedConfigs();
 }
 
+function togglePin(id) {
+  const configs = getSavedConfigs();
+  const idx = configs.findIndex(c => c.id === id);
+  if (idx === -1) return;
+  configs[idx].pinned = !configs[idx].pinned;
+  localStorage.setItem(CFG_KEY, JSON.stringify(configs));
+  renderSavedConfigs();
+}
+
 function renderSavedConfigs() {
   const configs = getSavedConfigs();
   const el = document.getElementById('saved-configs-list');
@@ -390,6 +399,7 @@ function renderSavedConfigs() {
     <div class="saved-cfg-row">
       <span class="saved-cfg-name" title="Saved ${c.savedAt}">${c.name}</span>
       <button class="btn-sm" onclick="loadConfig('${c.id}')">Open</button>
+      <button class="btn-sm" onclick="togglePin('${c.id}')" title="${c.pinned ? 'Remove from dashboard' : 'Pin to dashboard'}">${c.pinned ? '📌' : '☆'}</button>
       <button class="btn-sm btn-sm-del" onclick="deleteConfig('${c.id}')" title="Delete">✕</button>
     </div>`).join('');
 }

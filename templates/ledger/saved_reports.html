@@ -52,6 +52,15 @@ function presetLabel(p) {
   return map[p] || p;
 }
 
+function togglePin(id) {
+  const configs = getSavedConfigs();
+  const idx = configs.findIndex(c => c.id === id);
+  if (idx === -1) return;
+  configs[idx].pinned = !configs[idx].pinned;
+  saveSavedConfigs(configs);
+  render();
+}
+
 function render() {
   const configs = getSavedConfigs();
   const el = document.getElementById('sr-list');
@@ -71,6 +80,7 @@ function render() {
       <div class="sr-actions">
         <a class="btn-sm" href="${RPT_URL}?load=${c.id}&run=1">▶ Open</a>
         <a class="btn-sm" href="${RPT_URL}?load=${c.id}">✎ Edit</a>
+        <button class="btn-sm" onclick="togglePin('${c.id}')" title="${c.pinned ? 'Remove from dashboard' : 'Pin to dashboard'}">${c.pinned ? '📌 Pinned' : '☆ Pin'}</button>
         <button class="btn-sm btn-sm-del" onclick="confirmDelete('${c.id}')">✕ Delete</button>
       </div>
     </div>
