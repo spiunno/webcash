@@ -10,7 +10,9 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
 {% endblock %}
 
 {% block content %}
-<div class="card" style="margin-bottom:16px;">
+
+{# ── Top action bar ── #}
+<div class="account-action-bar card" style="margin-bottom:16px;">
   <div style="display:flex;justify-content:space-between;align-items:center;">
     <div>
       <div style="font-size:1.1rem;font-weight:700;">{{ account.name }}</div>
@@ -32,11 +34,11 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
            class="btn" style="padding:6px 14px;font-size:.82rem;background:var(--border);color:var(--text);">
           Edit Account
         </a>
-        <button id="reconcile-btn" type="button" class="btn btn-secondary"
+        <button type="button" class="btn btn-secondary reconcile-trigger-btn"
                 style="padding:6px 14px;font-size:.82rem;white-space:nowrap;">
           Reconcile…
         </button>
-        <button id="new-txn-btn" class="btn btn-primary"
+        <button type="button" class="btn btn-primary new-txn-trigger-btn"
                 style="white-space:nowrap;"
                 data-url="{% url 'transaction_new' account.id %}?partial=1">
           + New Transaction
@@ -82,8 +84,31 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
   </div>
 </div>
 
-{# New transaction panel #}
-<div id="new-txn-panel" class="card" style="display:none;padding:0;overflow:visible;margin-bottom:8px;"></div>
+{# Unreconcile confirmation modal #}
+<div id="unreconcile-modal" style="display:none;position:fixed;inset:0;z-index:1100;
+     background:rgba(0,0,0,.45);align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:10px;padding:24px 28px;min-width:320px;max-width:400px;
+              box-shadow:0 8px 32px rgba(0,0,0,.22);">
+    <div style="font-size:1rem;font-weight:700;margin-bottom:12px;">Undo Reconciliation</div>
+    <p style="font-size:.88rem;color:var(--text-muted);margin:0 0 20px;">
+      Remove the reconciliation flag from this split? This cannot be undone automatically.
+    </p>
+    <div style="display:flex;justify-content:flex-end;gap:8px;">
+      <button type="button" id="unreconcile-cancel"
+              style="padding:7px 16px;border:1px solid var(--border);border-radius:5px;
+                     background:none;cursor:pointer;font-size:.85rem;">Cancel</button>
+      <button type="button" id="unreconcile-confirm"
+              style="padding:7px 18px;border:none;border-radius:5px;background:#c0392b;
+                     color:#fff;cursor:pointer;font-size:.85rem;font-weight:600;">Remove</button>
+    </div>
+  </div>
+</div>
+
+{# ── Lazy-load sentinel (visible when user scrolls to top) ── #}
+<div id="lazy-load-sentinel" style="height:4px;"></div>
+<div id="lazy-load-status" style="display:none;padding:8px 16px;font-size:.8rem;color:var(--text-muted);text-align:center;">
+  Loading older transactions…
+</div>
 
 <div class="card" style="padding:0;overflow:hidden;">
   {% if rows %}
@@ -167,7 +192,10 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
         </td>
         <td data-col="8" style="text-align:center;padding:4px 2px;">
           {% if s.reconciled %}
-            <span class="clr-badge clr-R" title="Reconciled on {{ s.reconcile_date }}">R</span>
+            <span class="clr-badge clr-R clr-R-clickable"
+                  data-split-id="{{ s.id }}"
+                  title="Reconciled on {{ s.reconcile_date }} — click to undo"
+                  style="cursor:pointer;">R</span>
           {% else %}
             <span class="clr-badge {% if s.confirmed %}clr-C{% else %}clr-N{% endif %}"
                   data-split-id="{{ s.id }}"
@@ -229,13 +257,13 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
                   <td style="color:var(--text-muted);font-size:.82rem;">{{ sp.memo|default:"" }}</td>
                   <td class="amount {% if sp.value_num > 0 %}positive{% endif %}">
                     {% if sp.value_num > 0 %}
-                      {{ sp.display_amount|num:account_prefs }}
+                      {% num_for_acct sp.display_amount account_prefs sp.account %}
                       <span class="ccy-tag">{{ sp.account.commodity_mnemonic }}</span>
                     {% endif %}
                   </td>
                   <td class="amount {% if sp.value_num < 0 %}negative{% endif %}">
                     {% if sp.value_num < 0 %}
-                      {{ sp.display_amount|num:account_prefs }}
+                      {% num_for_acct sp.display_amount account_prefs sp.account %}
                       <span class="ccy-tag">{{ sp.account.commodity_mnemonic }}</span>
                     {% endif %}
                   </td>
@@ -255,6 +283,46 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
   {% else %}
   <p style="padding:20px;color:var(--text-muted);font-size:.9rem;">No transactions in this account.</p>
   {% endif %}
+</div>
+
+{# ── New transaction panel (at the bottom, near action bar) ── #}
+<div id="new-txn-panel" class="card" style="display:none;padding:0;overflow:visible;margin-top:8px;"></div>
+
+{# ── Bottom action bar ── #}
+<div class="account-action-bar card" style="margin-top:16px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div>
+      <div style="font-size:1.1rem;font-weight:700;">{{ account.name }}</div>
+      <div style="font-size:.8rem;color:#7f8fa4;margin-top:3px;">
+        {{ account.get_account_type_display }} &middot; {{ account.commodity_mnemonic }}
+        {% if account.description %} &middot; {{ account.description }}{% endif %}
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;">
+      <div style="text-align:right;">
+        <div style="font-size:.75rem;color:#7f8fa4;text-transform:uppercase;letter-spacing:.05em;">Balance</div>
+        <div style="font-size:1.5rem;font-weight:700;
+          color:{% if account.balance >= 0 %}var(--success){% else %}var(--danger){% endif %}">
+          {{ account.balance|num:account_prefs }} <span style="font-size:.9rem;opacity:.7;">{{ account.commodity_mnemonic }}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <a href="{% url 'account_edit' account.id %}"
+           class="btn" style="padding:6px 14px;font-size:.82rem;background:var(--border);color:var(--text);">
+          Edit Account
+        </a>
+        <button type="button" class="btn btn-secondary reconcile-trigger-btn"
+                style="padding:6px 14px;font-size:.82rem;white-space:nowrap;">
+          Reconcile…
+        </button>
+        <button type="button" class="btn btn-primary new-txn-trigger-btn"
+                style="white-space:nowrap;"
+                data-url="{% url 'transaction_new' account.id %}?partial=1">
+          + New Transaction
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <style>
@@ -540,24 +608,19 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
   /* ═══════════════════════════════════════════════════════════
      RECONCILE MODAL
   ═══════════════════════════════════════════════════════════ */
-  const reconcileBtn   = document.getElementById('reconcile-btn');
   const reconcileModal = document.getElementById('reconcile-modal');
   const reconcileCancel = document.getElementById('reconcile-modal-cancel');
 
-  if (reconcileBtn) {
-    reconcileBtn.addEventListener('click', () => {
-      reconcileModal.style.display = 'flex';
-    });
-    reconcileCancel.addEventListener('click', () => {
-      reconcileModal.style.display = 'none';
-    });
-    reconcileModal.addEventListener('click', e => {
-      if (e.target === reconcileModal) reconcileModal.style.display = 'none';
-    });
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape') reconcileModal.style.display = 'none';
-    });
-  }
+  document.addEventListener('click', e => {
+    if (e.target.closest('.reconcile-trigger-btn')) reconcileModal.style.display = 'flex';
+  });
+  reconcileCancel.addEventListener('click', () => { reconcileModal.style.display = 'none'; });
+  reconcileModal.addEventListener('click', e => {
+    if (e.target === reconcileModal) reconcileModal.style.display = 'none';
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') reconcileModal.style.display = 'none';
+  });
 
   /* ═══════════════════════════════════════════════════════════
      CONFIRMED TOGGLE (Clr badges)
@@ -590,6 +653,68 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
     } catch (_) {}
   });
 
+  /* ═══════════════════════════════════════════════════════════
+     UNRECONCILE MODAL
+  ═══════════════════════════════════════════════════════════ */
+  const unreconcileModal   = document.getElementById('unreconcile-modal');
+  const unreconcileCancel  = document.getElementById('unreconcile-cancel');
+  const unreconcileConfirm = document.getElementById('unreconcile-confirm');
+  let pendingUnreconcileSplitId = null;
+
+  document.addEventListener('click', function (e) {
+    const badge = e.target.closest('.clr-R-clickable');
+    if (!badge) return;
+    e.stopPropagation();
+    pendingUnreconcileSplitId = badge.dataset.splitId;
+    unreconcileModal.style.display = 'flex';
+  });
+
+  unreconcileCancel.addEventListener('click', () => {
+    unreconcileModal.style.display = 'none';
+    pendingUnreconcileSplitId = null;
+  });
+
+  unreconcileModal.addEventListener('click', e => {
+    if (e.target === unreconcileModal) {
+      unreconcileModal.style.display = 'none';
+      pendingUnreconcileSplitId = null;
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && unreconcileModal.style.display === 'flex') {
+      unreconcileModal.style.display = 'none';
+      pendingUnreconcileSplitId = null;
+    }
+  });
+
+  unreconcileConfirm.addEventListener('click', async () => {
+    if (!pendingUnreconcileSplitId) return;
+    const splitId = pendingUnreconcileSplitId;
+    unreconcileModal.style.display = 'none';
+    pendingUnreconcileSplitId = null;
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+      || getCookie('csrftoken');
+    try {
+      const res = await fetch(`/split/${splitId}/unreconcile/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken },
+      });
+      if (res.ok) {
+        const badge = document.querySelector(`.clr-R-clickable[data-split-id="${splitId}"]`);
+        if (badge) {
+          badge.textContent = 'n';
+          badge.className = 'clr-badge clr-N';
+          badge.title = 'Not confirmed — click to confirm';
+          badge.dataset.confirmed = '0';
+          delete badge.dataset.splitId;
+          badge.dataset.splitId = splitId;
+          badge.style.cursor = 'pointer';
+        }
+      }
+    } catch (_) {}
+  });
+
   function getCookie(name) {
     const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
     return m ? m.pop() : '';
@@ -598,16 +723,18 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
   /* ═══════════════════════════════════════════════════════════
      NEW TRANSACTION BUTTON
   ═══════════════════════════════════════════════════════════ */
-  const newBtn   = document.getElementById('new-txn-btn');
   const newPanel = document.getElementById('new-txn-panel');
 
-  newBtn.addEventListener('click', async () => {
-    newBtn.style.display = 'none';
+  document.addEventListener('click', async function (e) {
+    const btn = e.target.closest('.new-txn-trigger-btn');
+    if (!btn) return;
+    document.querySelectorAll('.new-txn-trigger-btn').forEach(b => b.style.display = 'none');
     newPanel.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:.85rem;">Loading…</div>';
     newPanel.style.display = '';
-    const res = await fetch(newBtn.dataset.url);
+    newPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const res = await fetch(btn.dataset.url);
     newPanel.innerHTML = await res.text();
-    newPanel.querySelectorAll('script').forEach(s => {
+    newPanel.querySelectorAll('script:not([type]), script[type="text/javascript"]').forEach(s => {
       const live = document.createElement('script');
       live.textContent = s.textContent;
       document.head.appendChild(live);
@@ -633,11 +760,11 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
     if (!form) return;
     const body = inner.querySelector('#inline-splits-body');
 
-    function addBalanceRow(rounded) {
+    function addBalanceRow() {
       const idx = body.querySelectorAll('.inline-split-row').length;
       const clone = body.querySelector('.inline-split-row').cloneNode(true);
       clone.querySelectorAll('[name]').forEach(el => {
-        el.name = el.name.replace(/split_\d+_/, `split_${idx}_`);
+        el.name = el.name.replace(/split_\d+_/, 'split_' + idx + '_');
         if (el.tagName === 'INPUT') el.value = '';
         if (el.tagName === 'SELECT') el.selectedIndex = 0;
       });
@@ -646,15 +773,19 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
       clone.style.outline = '1px dashed var(--accent)';
       body.appendChild(clone);
       attachRemove(clone);
-      // stop auto-managing this row if the user edits amounts manually
-      clone.querySelector('.pi-debit').addEventListener('input', () => { delete clone.dataset.autoBalance; clone.style.outline = ''; clone.style.background = ''; });
-      clone.querySelector('.pi-credit').addEventListener('input', () => { delete clone.dataset.autoBalance; clone.style.outline = ''; clone.style.background = ''; });
+      clone.querySelector('.pi-debit').addEventListener('input', function () { delete clone.dataset.autoBalance; clone.style.outline = ''; clone.style.background = ''; });
+      clone.querySelector('.pi-credit').addEventListener('input', function () { delete clone.dataset.autoBalance; clone.style.outline = ''; clone.style.background = ''; });
+      clone.querySelector('select').addEventListener('change', function () {
+        delete clone.dataset.autoBalance;
+        clone.style.outline = ''; clone.style.background = '';
+        updateBalance();
+      });
       return clone;
     }
 
     function updateBalance() {
       let total = 0;
-      body.querySelectorAll('.inline-split-row').forEach(r => {
+      body.querySelectorAll('.inline-split-row').forEach(function (r) {
         if (r.dataset.autoBalance) return;
         const d = parseFloat(r.querySelector('.pi-debit').value.replace(',', '.')) || 0;
         const c = parseFloat(r.querySelector('.pi-credit').value.replace(',', '.')) || 0;
@@ -663,19 +794,15 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
       const el = inner.querySelector('#pi-balance');
       if (!el) return;
       const rounded = Math.round(total * 100) / 100;
-
       let autoRow = body.querySelector('[data-auto-balance]');
-
       if (rounded !== 0) {
-        if (!autoRow) autoRow = addBalanceRow(rounded);
-        // keep the pre-filled amount in sync
+        if (!autoRow) autoRow = addBalanceRow();
         const di = autoRow.querySelector('.pi-debit');
         const ci = autoRow.querySelector('.pi-credit');
         if (rounded > 0) { di.value = ''; ci.value = rounded.toFixed(2); }
         else              { di.value = (-rounded).toFixed(2); ci.value = ''; }
-        el.textContent = `Out of balance: ${rounded > 0 ? '+' : ''}${rounded.toFixed(2)} — select account below`;
+        el.textContent = 'Out of balance: ' + (rounded > 0 ? '+' : '') + rounded.toFixed(2) + ' — select account below';
         el.className = 'balance-warn';
-        autoRow.querySelector('select').focus();
       } else {
         if (autoRow) {
           if (!autoRow.querySelector('select').value && body.querySelectorAll('.inline-split-row').length > 2) {
@@ -739,6 +866,101 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
       attachInlineForm(inner, detailRow);
     });
   }
+
+  /* ═══════════════════════════════════════════════════════════
+     JUMP TO TRANSACTION via URL hash #txn-{id}
+     or AUTO-SCROLL TO BOTTOM when no hash is present
+  ═══════════════════════════════════════════════════════════ */
+  (function () {
+    const m = window.location.hash.match(/^#txn-(\d+)$/);
+    if (m) {
+      const txnId = m[1];
+      const row    = document.querySelector(`.register-row[data-txn="${txnId}"]`);
+      const detail = document.querySelector(`.detail-row[data-for="${txnId}"]`);
+      if (row && detail) {
+        closeAll();
+        detail.style.display = '';
+        row.classList.add('expanded');
+        setTimeout(() => row.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80);
+      }
+    } else {
+      // Scroll to bottom so newest transactions are visible immediately
+      window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' });
+    }
+  })();
+
+  /* ═══════════════════════════════════════════════════════════
+     LAZY LOAD older transactions when scrolling to the top
+  ═══════════════════════════════════════════════════════════ */
+  (function () {
+    let currentOffset = {{ current_offset }};
+    let hasMore       = {{ has_more|yesno:'true,false' }};
+    let loading       = false;
+
+    const sentinel   = document.getElementById('lazy-load-sentinel');
+    const statusEl   = document.getElementById('lazy-load-status');
+    if (!sentinel || !tbody) return;
+
+    async function loadMore() {
+      if (loading || !hasMore) return;
+      loading = true;
+      statusEl.style.display = '';
+
+      // Remember distance from bottom so the view doesn't jump
+      const distFromBottom = document.documentElement.scrollHeight - window.scrollY;
+
+      try {
+        const res  = await fetch(`{% url 'account_register_rows' account.id %}?before=${currentOffset}`);
+        const html = await res.text();
+
+        const tmp = document.createElement('tbody');
+        tmp.innerHTML = html;
+
+        // Read meta from the hidden first row
+        const meta = tmp.querySelector('tr[data-lazy-meta]');
+        if (meta) {
+          currentOffset = parseInt(meta.dataset.newOffset, 10);
+          hasMore       = meta.dataset.hasMore === '1';
+          meta.remove();
+        } else {
+          hasMore = false;
+        }
+
+        // Apply column visibility to newly loaded cells
+        const newRows = Array.from(tmp.children);
+        COLS.forEach(c => {
+          if (!c.label) return;
+          newRows.forEach(tr => {
+            tr.querySelectorAll(`td[data-col="${c.idx}"]`).forEach(td =>
+              td.classList.toggle('col-hidden', hidden.has(c.idx))
+            );
+          });
+        });
+
+        // Prepend rows without jumping the scroll position
+        const firstExisting = tbody.firstChild;
+        newRows.forEach(tr => tbody.insertBefore(tr, firstExisting));
+        window.scrollTo({ top: document.documentElement.scrollHeight - distFromBottom, behavior: 'instant' });
+
+        // Update detail-cell colspans
+        const visible = COLS.filter(c => !hidden.has(c.idx)).length;
+        tbody.querySelectorAll('td.detail-cell').forEach(td => td.colSpan = visible);
+
+      } catch (_) {
+        hasMore = false;
+      } finally {
+        loading = false;
+        statusEl.style.display = 'none';
+        if (!hasMore) observer.disconnect();
+      }
+    }
+
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) loadMore();
+    }, { rootMargin: '200px' });
+
+    if (hasMore) observer.observe(sentinel);
+  })();
 
 })();
 </script>

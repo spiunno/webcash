@@ -62,9 +62,22 @@ Split
   account_id      FK → Account (PROTECT — won't delete account with splits)
   value_num   decimal(18,4)  — positive = debit, negative = credit
   memo        varchar(2048)
-  reconciled  bool
+  confirmed   bool  — true = Cleared (C), toggled manually by the user
+  reconciled  bool  — true = Reconciled (R), set by reconciliation workflow
   reconcile_date  date (nullable)
 ```
+
+### Split CLR status
+
+Each split carries a **cleared** status, following the GnuCash convention:
+
+| Badge | Code | Meaning |
+|-------|------|---------|
+| N | `reconciled=False` | Not cleared — default state |
+| C | `reconciled=False, confirmed=True` | Cleared — manually confirmed by the user |
+| R | `reconciled=True` | Reconciled — locked after a reconciliation session (stores `reconcile_date`) |
+
+Clicking the badge in the register toggles between N and C. The R state is set by the reconciliation workflow and cannot be toggled manually.
 
 ### Account tree
 

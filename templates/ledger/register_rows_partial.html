@@ -1,0 +1,112 @@
+{% load ledger_tags %}
+<tr data-lazy-meta data-new-offset="{{ new_offset }}" data-has-more="{{ has_more|yesno:'1,0' }}" style="display:none;"></tr>
+{% for row in rows %}
+{% with s=row.split txn=row.txn %}
+
+<tr class="register-row {% if forloop.counter|divisibleby:2 %}row-even{% endif %}" data-txn="{{ txn.id }}" data-split="{{ s.id }}" style="cursor:pointer;">
+  <td data-col="0" style="text-align:center;color:var(--text-muted);font-size:.6rem;padding-right:0;">
+    <span class="expand-icon">▶</span>
+  </td>
+  <td data-col="1" data-sort="{{ txn.post_date|date:'Y-m-d' }}" style="white-space:nowrap">{{ txn.post_date|udate:prefs }}</td>
+  <td data-col="2">{{ txn.description|default:"—" }}</td>
+  <td data-col="3" style="font-size:.82rem;color:var(--text-muted)">{{ row.other_label }}</td>
+  <td data-col="4" style="font-size:.82rem;color:var(--text-muted)">{{ s.memo|default:"" }}</td>
+  <td data-col="5" class="amount {% if row.display_amount > 0 %}positive{% endif %}"
+      data-sort="{% if row.display_amount > 0 %}{{ row.display_amount }}{% else %}0{% endif %}">
+    {% if row.display_amount > 0 %}{{ row.display_amount|num:account_prefs }} <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>{% endif %}
+  </td>
+  <td data-col="6" class="amount {% if row.display_amount < 0 %}negative{% endif %}"
+      data-sort="{% if row.display_amount < 0 %}{{ row.display_amount|floatformat:6|slice:'1:' }}{% else %}0{% endif %}">
+    {% if row.display_amount < 0 %}{{ row.display_amount|num:account_prefs }} <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>{% endif %}
+  </td>
+  <td data-col="7" class="amount {% if row.running >= 0 %}positive{% else %}negative{% endif %}"
+      data-sort="{{ row.running }}">
+    {{ row.running|num:account_prefs }} <span class="ccy-tag">{{ account.commodity_mnemonic }}</span>
+  </td>
+  <td data-col="8" style="text-align:center;padding:4px 2px;">
+    {% if s.reconciled %}
+      <span class="clr-badge clr-R clr-R-clickable"
+            data-split-id="{{ s.id }}"
+            title="Reconciled on {{ s.reconcile_date }} — click to undo"
+            style="cursor:pointer;">R</span>
+    {% else %}
+      <span class="clr-badge {% if s.confirmed %}clr-C{% else %}clr-N{% endif %}"
+            data-split-id="{{ s.id }}"
+            data-confirmed="{{ s.confirmed|yesno:'1,0' }}"
+            title="{% if s.confirmed %}Confirmed — click to unconfirm{% else %}Not confirmed — click to confirm{% endif %}"
+            style="cursor:pointer;">{% if s.confirmed %}C{% else %}n{% endif %}</span>
+    {% endif %}
+  </td>
+</tr>
+
+<tr class="detail-row" data-for="{{ txn.id }}"
+    data-edit-url="{% url 'transaction_edit' txn.id %}?partial=1"
+    style="display:none;">
+  <td class="detail-cell" colspan="9" style="padding:0;background:var(--bg);border-bottom:2px solid var(--border);">
+    <div class="detail-inner">
+    <div class="split-detail">
+      <div class="split-detail-header">
+        <span>{{ txn.post_date|udate:prefs }} &mdash; {{ txn.description|default:"(no description)" }}</span>
+        <div class="txn-actions">
+          <button type="button" class="btn btn-primary edit-inline-btn"
+                  style="padding:4px 14px;font-size:.8rem;">Edit</button>
+          <form method="post" action="{% url 'transaction_duplicate' txn.id %}" style="display:inline;">
+            {% csrf_token %}
+            <input type="hidden" name="back" value="{% url 'account_register' account.id %}">
+            <button type="submit" class="btn btn-secondary"
+                    style="padding:4px 14px;font-size:.8rem;">Duplicate</button>
+          </form>
+          <form method="post" action="{% url 'transaction_delete' txn.id %}" style="display:inline;"
+                onsubmit="return confirm('Delete this transaction?');">
+            {% csrf_token %}
+            <input type="hidden" name="back" value="{% url 'account_register' account.id %}">
+            <button type="submit" class="btn btn-danger"
+                    style="padding:4px 14px;font-size:.8rem;">Delete</button>
+          </form>
+          {% if row.other_account_id %}
+          <a href="{% url 'account_register' row.other_account_id %}#txn-{{ txn.id }}"
+             class="btn btn-secondary"
+             style="padding:4px 14px;font-size:.8rem;text-decoration:none;">Jump</a>
+          {% endif %}
+        </div>
+      </div>
+      <table class="split-table">
+        <thead>
+          <tr>
+            <th>Account</th>
+            <th>Memo</th>
+            <th class="amount">Debit</th>
+            <th class="amount">Credit</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sp in txn.splits.all %}
+          <tr {% if sp.account == account %}style="font-weight:600;"{% endif %}>
+            <td>
+              <a href="{% url 'account_register' sp.account.id %}"
+                 style="color:var(--accent);text-decoration:none;">{{ sp.account.name }}</a>
+            </td>
+            <td style="color:var(--text-muted);font-size:.82rem;">{{ sp.memo|default:"" }}</td>
+            <td class="amount {% if sp.value_num > 0 %}positive{% endif %}">
+              {% if sp.value_num > 0 %}
+                {% num_for_acct sp.display_amount account_prefs sp.account %}
+                <span class="ccy-tag">{{ sp.account.commodity_mnemonic }}</span>
+              {% endif %}
+            </td>
+            <td class="amount {% if sp.value_num < 0 %}negative{% endif %}">
+              {% if sp.value_num < 0 %}
+                {% num_for_acct sp.display_amount account_prefs sp.account %}
+                <span class="ccy-tag">{{ sp.account.commodity_mnemonic }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    </div>
+  </td>
+</tr>
+
+{% endwith %}
+{% endfor %}

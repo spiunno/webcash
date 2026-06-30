@@ -1,0 +1,767 @@
+{% extends "ledger/base.html" %}
+
+{% block title %}{{ mode_label }} Chart — WebCash{% endblock %}
+
+{% block tab_script %}
+window.CURRENT_TAB = {
+  id:   'report-{{ mode }}',
+  label:'{{ mode_label }} Chart',
+  url:  '{% if mode == "income" %}{% url "income_report" %}{% else %}{% url "expense_report" %}{% endif %}',
+  closeable: true
+};
+{% endblock %}
+
+{% block breadcrumb %}Reports &rsaquo; {{ mode_label }} Chart{% endblock %}
+
+{% block content %}
+<div class="rpt-layout" id="rpt-layout">
+
+  <!-- ===== CONFIG PANEL ===== -->
+  <div class="card rpt-config" id="rpt-config">
+    <div class="card-title">Report Configuration</div>
+
+    <div class="form-group">
+      <label for="rpt-title">Title</label>
+      <input type="text" id="rpt-title" value="{{ mode_label }} Chart" placeholder="Report title">
+    </div>
+
+    <div class="rpt-date-row">
+      <div class="form-group">
+        <label>Start Date</label>
+        <div class="date-combo">
+          <select id="start-preset" onchange="applyPreset('start')">
+            <option value="">— custom —</option>
+            <option value="today">Today</option>
+            <option value="start_month">Start of this month</option>
+            <option value="start_prev_month">Start of prev month</option>
+            <option value="start_quarter">Start of this quarter</option>
+            <option value="start_prev_quarter">Start of prev quarter</option>
+            <option value="start_year" selected>Start of this year</option>
+            <option value="start_prev_year">Start of prev year</option>
+          </select>
+          <input type="date" id="start-date">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>End Date</label>
+        <div class="date-combo">
+          <select id="end-preset" onchange="applyPreset('end')">
+            <option value="">— custom —</option>
+            <option value="today" selected>Today</option>
+            <option value="end_month">End of this month</option>
+            <option value="end_prev_month">End of prev month</option>
+            <option value="end_quarter">End of this quarter</option>
+            <option value="end_prev_quarter">End of prev quarter</option>
+            <option value="end_year">End of this year</option>
+            <option value="end_prev_year">End of prev year</option>
+          </select>
+          <input type="date" id="end-date">
+        </div>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="rpt-step">Step Size</label>
+      <select id="rpt-step">
+        <option value="day">One day</option>
+        <option value="week">One week</option>
+        <option value="2week">Two weeks</option>
+        <option value="month" selected>One month</option>
+        <option value="quarter">Quarter year</option>
+        <option value="halfyear">Half year</option>
+        <option value="year">One year</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="rpt-currency">Currency</label>
+      <select id="rpt-currency">
+        {% for code, label in currencies %}
+        <option value="{{ code }}"{% if code == 'EUR' %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- ── Extra options ── -->
+    <div class="form-group">
+      <label for="rpt-topn">Max categories (Top N)</label>
+      <input type="number" id="rpt-topn" value="10" min="1" max="50" style="width:80px">
+    </div>
+
+    <div class="form-group">
+      <label>Category names</label>
+      <div style="display:flex;gap:16px;margin-top:4px">
+        <label class="inline-check"><input type="radio" name="name-style" id="name-short" value="short" checked> Short</label>
+        <label class="inline-check"><input type="radio" name="name-style" id="name-full"  value="full"> Full path</label>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Y axis</label>
+      <div style="display:flex;gap:16px;margin-top:4px">
+        <label class="inline-check"><input type="radio" name="y-mode" id="y-absolute" value="absolute" checked> Absolute values</label>
+        <label class="inline-check"><input type="radio" name="y-mode" id="y-percent"  value="percent"> Percentages</label>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Accounts</label>
+      <div class="acct-toolbar">
+        <button class="btn-sm" onclick="selectAllAccounts()">All</button>
+        <button class="btn-sm" onclick="clearAllAccounts()">None</button>
+        <label class="inline-check"><input type="checkbox" id="show-hidden" onchange="renderAccountTree()"> Show hidden</label>
+      </div>
+      <div id="acct-tree" class="acct-tree"></div>
+    </div>
+
+    <button class="btn btn-primary rpt-run-btn" onclick="runReport()" id="run-btn">Run Report</button>
+
+    <!-- ── Saved configurations ── -->
+    <div class="rpt-save-section">
+      <div class="rpt-save-header">
+        <span class="rpt-save-title">Saved Configurations</span>
+        <button class="btn-link rpt-save-toggle" onclick="toggleSavePanel()" id="save-toggle-btn">▸ Save current</button>
+      </div>
+      <div id="save-panel" style="display:none">
+        <div class="rpt-save-row">
+          <input type="text" id="save-name" placeholder="Configuration name…" onkeydown="if(event.key==='Enter')saveConfig()">
+          <button class="btn-sm" onclick="saveConfig()">Save</button>
+        </div>
+      </div>
+      <div id="saved-configs-list" class="saved-configs-list"></div>
+    </div>
+  </div>
+
+  <!-- ===== OUTPUT AREA ===== -->
+  <div id="rpt-output" class="rpt-output" style="display:none">
+
+    <!-- print-only header -->
+    <div class="print-header" style="display:none">
+      <div class="print-header-brand">WebCash</div>
+      <div id="print-header-title" class="print-header-title"></div>
+      <div id="print-header-meta"  class="print-header-meta"></div>
+    </div>
+
+    <div class="card">
+      <div class="rpt-output-header">
+        <div class="rpt-output-left">
+          <h2 id="rpt-output-title" class="card-title" style="margin-bottom:0"></h2>
+          <button class="btn-sm rpt-reconfigure-btn" onclick="reconfigure()" id="reconfigure-btn" style="display:none">⚙ Reconfigure</button>
+        </div>
+      </div>
+      <div class="rpt-chart-wrap">
+        <canvas id="rpt-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="rpt-table-header">
+        <div class="card-title" style="margin-bottom:0">Data Table</div>
+        <div class="rpt-export-btns">
+          <button class="btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
+          <button class="btn-sm" onclick="exportPDF()">🖨 Export PDF</button>
+        </div>
+      </div>
+      <div id="rpt-table-wrap" style="overflow-x:auto;margin-top:14px"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const REPORT_MODE  = '{{ mode }}';
+const ACCOUNTS     = {{ accounts_json|safe }};
+const DATA_URL     = '{% if mode == "income" %}{% url "income_report_data" %}{% else %}{% url "expense_report_data" %}{% endif %}';
+const CFG_KEY      = 'webcash_{{ mode }}_configs_v1';
+
+/* ── Date preset helpers ──────────────────────────────────────── */
+function fmtDate(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth()+1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+function getPreset(p) {
+  const n = new Date(), y = n.getFullYear(), mo = n.getMonth();
+  switch(p) {
+    case 'today':              return fmtDate(n);
+    case 'start_month':        return fmtDate(new Date(y, mo, 1));
+    case 'end_month':          return fmtDate(new Date(y, mo+1, 0));
+    case 'start_prev_month':   return fmtDate(new Date(y, mo-1, 1));
+    case 'end_prev_month':     return fmtDate(new Date(y, mo, 0));
+    case 'start_quarter':      { const q=Math.floor(mo/3); return fmtDate(new Date(y, q*3, 1)); }
+    case 'end_quarter':        { const q=Math.floor(mo/3); return fmtDate(new Date(y, q*3+3, 0)); }
+    case 'start_prev_quarter': { const q=Math.floor(mo/3)-1, py=q<0?y-1:y, pm=((q%4+4)%4)*3; return fmtDate(new Date(py,pm,1)); }
+    case 'end_prev_quarter':   { const q=Math.floor(mo/3); return fmtDate(new Date(y, q*3, 0)); }
+    case 'start_year':         return fmtDate(new Date(y, 0, 1));
+    case 'end_year':           return fmtDate(new Date(y, 11, 31));
+    case 'start_prev_year':    return fmtDate(new Date(y-1, 0, 1));
+    case 'end_prev_year':      return fmtDate(new Date(y-1, 11, 31));
+    default: return '';
+  }
+}
+function applyPreset(which) {
+  const sel = document.getElementById(which+'-preset');
+  if (sel.value) document.getElementById(which+'-date').value = getPreset(sel.value);
+}
+
+/* ── Account tree ─────────────────────────────────────────────── */
+const checkedIds = new Set();
+
+const childrenOf = {};
+ACCOUNTS.forEach(a => {
+  const key = a.parent ?? '__root__';
+  if (!childrenOf[key]) childrenOf[key] = [];
+  childrenOf[key].push(a);
+});
+
+// Find effective root(s): skip single placeholder root
+let topNodes = (childrenOf['__root__'] || []);
+if (topNodes.length === 1 && topNodes[0].placeholder) {
+  topNodes = childrenOf[topNodes[0].id] || [];
+}
+topNodes = [...topNodes].sort((a,b) => a.name.localeCompare(b.name));
+
+function selectAllAccounts() {
+  const sh = document.getElementById('show-hidden').checked;
+  ACCOUNTS.forEach(a => { if (!a.placeholder && (sh || !a.hidden)) checkedIds.add(a.id); });
+  renderAccountTree();
+}
+function clearAllAccounts() { checkedIds.clear(); renderAccountTree(); }
+
+function addDescendants(id) {
+  (childrenOf[id] || []).forEach(c => {
+    if (!c.placeholder) checkedIds.add(c.id);
+    addDescendants(c.id);
+  });
+}
+function selectChildren(id) { addDescendants(id); renderAccountTree(); }
+
+function renderNode(a, depth) {
+  const sh = document.getElementById('show-hidden').checked;
+  if (!sh && a.hidden) return '';
+  const children = (childrenOf[a.id] || []).filter(c => sh || !c.hidden);
+  const pad = depth * 18;
+  const checked = checkedIds.has(a.id) ? ' checked' : '';
+  const cls = ['acct-node', a.hidden?'acct-hidden':'', a.placeholder?'acct-placeholder':''].filter(Boolean).join(' ');
+
+  let h = `<div class="${cls}" style="padding-left:${pad}px">`;
+  if (a.placeholder) {
+    h += `<span class="acct-chevron">▸</span>`;
+  } else {
+    h += `<input type="checkbox" data-id="${a.id}"${checked} onchange="toggleAcct(${a.id},this.checked)">`;
+  }
+  h += `<span class="acct-name" title="${a.type} · ${a.commodity}">${a.name}</span>`;
+  if (children.length && !a.placeholder) {
+    h += `<button class="btn-link" onclick="selectChildren(${a.id})" title="Select all descendants">+sub</button>`;
+  }
+  h += `</div>`;
+  children.forEach(c => { h += renderNode(c, depth+1); });
+  return h;
+}
+function renderAccountTree() {
+  const container = document.getElementById('acct-tree');
+  let h = '';
+  topNodes.forEach(n => { h += renderNode(n, 0); });
+  container.innerHTML = h || '<em class="text-muted">No accounts</em>';
+}
+function toggleAcct(id, checked) {
+  if (checked) checkedIds.add(id); else checkedIds.delete(id);
+}
+
+/* ── Report execution ─────────────────────────────────────────── */
+async function runReport() {
+  const btn   = document.getElementById('run-btn');
+  const start = document.getElementById('start-date').value;
+  const end   = document.getElementById('end-date').value;
+  const step  = document.getElementById('rpt-step').value;
+  const cur   = document.getElementById('rpt-currency').value;
+  const title = document.getElementById('rpt-title').value.trim() || (REPORT_MODE === 'income' ? 'Income Chart' : 'Expense Chart');
+  const ids   = [...checkedIds].join(',');
+
+  if (!start || !end) { alert('Please set start and end dates.'); return; }
+  if (!ids)           { alert('Please select at least one account.'); return; }
+
+  btn.disabled = true; btn.textContent = 'Running…';
+  try {
+    const url = `${DATA_URL}?start=${start}&end=${end}&step=${step}&currency=${cur}&accounts=${ids}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('Server error ' + resp.status);
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    lastData = {...data, title, reportCurrency: cur};
+    renderOutput(lastData);
+    collapseConfig();
+  } catch(e) {
+    alert('Error fetching report: ' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Run Report';
+  }
+}
+
+function collapseConfig() {
+  document.getElementById('rpt-config').style.display = 'none';
+  document.getElementById('reconfigure-btn').style.display = '';
+  document.getElementById('rpt-layout').classList.add('config-hidden');
+}
+function reconfigure() {
+  document.getElementById('rpt-config').style.display = '';
+  document.getElementById('reconfigure-btn').style.display = 'none';
+  document.getElementById('rpt-layout').classList.remove('config-hidden');
+  document.getElementById('rpt-config').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+/* ── Saved configurations ─────────────────────────────────────── */
+function getSavedConfigs() {
+  try { return JSON.parse(localStorage.getItem(CFG_KEY)) || []; }
+  catch { return []; }
+}
+function getCurrentParams() {
+  return {
+    title:       document.getElementById('rpt-title').value,
+    startPreset: document.getElementById('start-preset').value,
+    startDate:   document.getElementById('start-date').value,
+    endPreset:   document.getElementById('end-preset').value,
+    endDate:     document.getElementById('end-date').value,
+    step:        document.getElementById('rpt-step').value,
+    currency:    document.getElementById('rpt-currency').value,
+    topN:        document.getElementById('rpt-topn').value,
+    nameStyle:   document.querySelector('input[name="name-style"]:checked')?.value || 'short',
+    yMode:       document.querySelector('input[name="y-mode"]:checked')?.value || 'absolute',
+    accountIds:  [...checkedIds],
+  };
+}
+function applyParams(p) {
+  document.getElementById('rpt-title').value    = p.title    || '';
+  document.getElementById('start-preset').value = p.startPreset || '';
+  document.getElementById('start-date').value   = p.startDate  || '';
+  document.getElementById('end-preset').value   = p.endPreset  || '';
+  document.getElementById('end-date').value     = p.endDate    || '';
+  document.getElementById('rpt-step').value     = p.step       || 'month';
+  document.getElementById('rpt-currency').value = p.currency   || 'EUR';
+  document.getElementById('rpt-topn').value     = p.topN       || '10';
+  if (p.nameStyle) {
+    const el = document.getElementById('name-' + p.nameStyle);
+    if (el) el.checked = true;
+  }
+  if (p.yMode) {
+    const el = document.getElementById('y-' + p.yMode);
+    if (el) el.checked = true;
+  }
+  checkedIds.clear();
+  (p.accountIds || []).forEach(id => checkedIds.add(id));
+  renderAccountTree();
+}
+var activeConfigId = null;
+function saveConfig() {
+  const name = document.getElementById('save-name').value.trim();
+  if (!name) { document.getElementById('save-name').focus(); return; }
+  const configs = getSavedConfigs();
+  if (activeConfigId) {
+    const idx = configs.findIndex(c => c.id === activeConfigId);
+    if (idx !== -1) {
+      configs[idx] = {...configs[idx], name, savedAt: new Date().toISOString().slice(0,10), params: getCurrentParams()};
+      localStorage.setItem(CFG_KEY, JSON.stringify(configs));
+      document.getElementById('save-name').value = '';
+      renderSavedConfigs(); return;
+    }
+  }
+  const newCfg = {id: Math.random().toString(36).slice(2), name, savedAt: new Date().toISOString().slice(0,10), params: getCurrentParams()};
+  configs.unshift(newCfg);
+  activeConfigId = newCfg.id;
+  localStorage.setItem(CFG_KEY, JSON.stringify(configs));
+  document.getElementById('save-name').value = '';
+  renderSavedConfigs();
+}
+function loadConfig(id, autoRun = true) {
+  const cfg = getSavedConfigs().find(c => c.id === id);
+  if (!cfg) return;
+  activeConfigId = id;
+  applyParams(cfg.params);
+  document.getElementById('save-name').value = cfg.name;
+  if (autoRun) runReport(); else document.getElementById('rpt-config').scrollIntoView({behavior:'smooth'});
+}
+function deleteConfig(id) {
+  localStorage.setItem(CFG_KEY, JSON.stringify(getSavedConfigs().filter(c => c.id !== id)));
+  renderSavedConfigs();
+}
+function togglePin(id) {
+  const configs = getSavedConfigs();
+  const idx = configs.findIndex(c => c.id === id);
+  if (idx === -1) return;
+  configs[idx].pinned = !configs[idx].pinned;
+  localStorage.setItem(CFG_KEY, JSON.stringify(configs));
+  renderSavedConfigs();
+}
+function renderSavedConfigs() {
+  const configs = getSavedConfigs();
+  const el = document.getElementById('saved-configs-list');
+  if (!configs.length) {
+    el.innerHTML = '<em class="text-muted" style="font-size:.8rem;display:block;padding:6px 0">No saved configurations yet</em>';
+    return;
+  }
+  el.innerHTML = configs.map(c => `
+    <div class="saved-cfg-row">
+      <span class="saved-cfg-name" title="Saved ${c.savedAt}">${c.name}</span>
+      <button class="btn-sm" onclick="loadConfig('${c.id}')">Open</button>
+      <button class="btn-sm" onclick="togglePin('${c.id}')" title="${c.pinned ? 'Remove from dashboard' : 'Pin to dashboard'}">${c.pinned ? '📌' : '☆'}</button>
+      <button class="btn-sm btn-sm-del" onclick="deleteConfig('${c.id}')" title="Delete">✕</button>
+    </div>`).join('');
+}
+function toggleSavePanel() {
+  const p = document.getElementById('save-panel');
+  const btn = document.getElementById('save-toggle-btn');
+  const open = p.style.display === 'none';
+  p.style.display = open ? '' : 'none';
+  btn.textContent = open ? '▾ Save current' : '▸ Save current';
+  if (open) document.getElementById('save-name').focus();
+}
+
+/* ── Init ─────────────────────────────────────────────────────── */
+(function init() {
+  const params = new URLSearchParams(window.location.search);
+  const loadId = params.get('load');
+  const autoRun = params.get('run') === '1';
+  if (loadId) {
+    loadConfig(loadId, autoRun);
+  } else {
+    applyPreset('start');
+    applyPreset('end');
+    selectAllAccounts();
+  }
+  renderSavedConfigs();
+  ['start','end'].forEach(w => {
+    document.getElementById(w+'-date').addEventListener('change', () => {
+      document.getElementById(w+'-preset').value = '';
+    });
+  });
+})();
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script>
+var chart   = null;
+var lastData = null;
+
+/* ── Colour palette for categories ───────────────────────────── */
+const PALETTE_BG = [
+  'rgba(74,146,56,0.78)',
+  'rgba(52,152,219,0.78)',
+  'rgba(231,76,60,0.78)',
+  'rgba(243,156,18,0.78)',
+  'rgba(155,89,182,0.78)',
+  'rgba(26,188,156,0.78)',
+  'rgba(230,126,34,0.78)',
+  'rgba(46,204,113,0.78)',
+  'rgba(52,73,94,0.78)',
+  'rgba(241,196,15,0.78)',
+  'rgba(192,57,43,0.78)',
+  'rgba(41,128,185,0.78)',
+];
+const PALETTE_BD = PALETTE_BG.map(c => c.replace('0.78', '1'));
+const OTHER_BG   = 'rgba(180,180,180,0.72)';
+const OTHER_BD   = 'rgba(140,140,140,1)';
+
+function getNameStyle() {
+  return document.querySelector('input[name="name-style"]:checked')?.value || 'short';
+}
+function getYMode() {
+  return document.querySelector('input[name="y-mode"]:checked')?.value || 'absolute';
+}
+function getTopN() {
+  return Math.max(1, parseInt(document.getElementById('rpt-topn').value) || 10);
+}
+
+function buildDisplayCategories(data) {
+  const topN      = getTopN();
+  const nameStyle = getNameStyle();
+  const sorted    = [...data.categories].sort((a,b) => b.total - a.total);
+  const top        = sorted.slice(0, topN);
+  const rest       = sorted.slice(topN);
+
+  const result = top.map((c, i) => ({
+    label: nameStyle === 'full' ? c.full_name : c.name,
+    data:  c.data,
+    bg:    PALETTE_BG[i % PALETTE_BG.length],
+    bd:    PALETTE_BD[i % PALETTE_BD.length],
+  }));
+
+  if (rest.length) {
+    // Sum "Other"
+    const otherData = data.dates.map((_, di) =>
+      rest.reduce((s, c) => s + (c.data[di] || 0), 0)
+    );
+    result.push({label: 'Other', data: otherData, bg: OTHER_BG, bd: OTHER_BD});
+  }
+  return result;
+}
+
+function toPercent(cats, n) {
+  return cats.map(cat => ({
+    ...cat,
+    data: cat.data.map((v, i) => {
+      const total = cats.reduce((s, c) => s + Math.abs(c.data[i] || 0), 0);
+      return total === 0 ? 0 : Math.round((Math.abs(v) / total) * 1000) / 10;
+    }),
+  }));
+}
+
+function renderOutput(data) {
+  document.getElementById('rpt-output').style.display = '';
+  document.getElementById('rpt-output-title').textContent = data.title;
+  updatePrintHeader(data);
+  const cur    = data.reportCurrency || data.currency;
+  const yMode  = getYMode();
+  let   cats   = buildDisplayCategories(data);
+  if (yMode === 'percent') cats = toPercent(cats, data.dates.length);
+
+  const datasets = cats.map(c => ({
+    label:           c.label,
+    data:            c.data,
+    backgroundColor: c.bg,
+    borderColor:     c.bd,
+    borderWidth:     1,
+    stack:           'a',
+  }));
+
+  const ctx = document.getElementById('rpt-chart').getContext('2d');
+  if (chart) chart.destroy();
+  chart = new Chart(ctx, {
+    type: 'bar',
+    data: {labels: data.dates, datasets},
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {position: 'top'},
+        tooltip: {
+          callbacks: {
+            label: c => {
+              const v = c.raw;
+              if (yMode === 'percent') return `${c.dataset.label}: ${Number(v).toFixed(1)}%`;
+              return `${c.dataset.label}: ${fmtAmt(v, cur)}`;
+            }
+          }
+        },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          ticks: {maxRotation: 45, autoSkip: true, maxTicksLimit: 30, font: {size: 11}},
+        },
+        y: {
+          stacked: true,
+          ticks: {
+            callback: v => yMode === 'percent' ? v + '%' : fmtAmt(v, cur),
+            font: {size: 11},
+          },
+          ...(yMode === 'percent' ? {min: 0, max: 100} : {}),
+        },
+      },
+    },
+  });
+
+  renderTable(data, cur, yMode);
+  document.getElementById('rpt-output').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function fmtAmt(v, cur) {
+  if (v === null || v === undefined) return '—';
+  try {
+    return new Intl.NumberFormat(navigator.language, {
+      style: 'currency', currency: cur,
+      minimumFractionDigits: 2, maximumFractionDigits: 2,
+    }).format(v);
+  } catch { return Number(v).toFixed(2) + ' ' + cur; }
+}
+
+function updatePrintHeader(data) {
+  const cur   = data.reportCurrency || data.currency;
+  const start = data.dates[0] || '';
+  const end   = data.dates[data.dates.length - 1] || '';
+  const step  = document.getElementById('rpt-step')?.selectedOptions[0]?.text || '';
+  const now   = new Date().toISOString().slice(0, 10);
+  document.getElementById('print-header-title').textContent = data.title;
+  document.getElementById('print-header-meta').textContent =
+    `${start} – ${end}  ·  ${step}  ·  ${cur}  ·  Generated ${now}`;
+}
+
+/* ── Print ─────────────────────────────────────────────────────── */
+var _chartWidthBeforePrint = null;
+window.addEventListener('beforeprint', () => {
+  if (!chart) return;
+  const wrap = document.querySelector('.rpt-chart-wrap');
+  const printWidth = (wrap ? wrap.clientWidth : 0) || 680;
+  _chartWidthBeforePrint = {w: chart.width, h: chart.height};
+  chart.resize(printWidth, Math.round(printWidth * 0.45));
+});
+window.addEventListener('afterprint', () => {
+  if (!chart || !_chartWidthBeforePrint) return;
+  chart.resize();
+  _chartWidthBeforePrint = null;
+});
+
+/* ── Data table ────────────────────────────────────────────────── */
+function renderTable(data, cur, yMode) {
+  const topN    = getTopN();
+  const nameStyle = getNameStyle();
+  const sorted  = [...data.categories].sort((a,b) => b.total - a.total);
+  const top     = sorted.slice(0, topN);
+  const rest    = sorted.slice(topN);
+
+  const colCats = top.map(c => ({...c, label: nameStyle === 'full' ? c.full_name : c.name}));
+  if (rest.length) {
+    const otherData = data.dates.map((_, di) =>
+      rest.reduce((s, c) => s + (c.data[di] || 0), 0)
+    );
+    colCats.push({label: 'Other', data: otherData, total: rest.reduce((s,c)=>s+c.total,0)});
+  }
+
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  let h = `<table><thead><tr><th>Date</th>`;
+  colCats.forEach(c => { h += `<th class="amount">${esc(c.label)}</th>`; });
+  h += `<th class="amount">Total</th></tr></thead><tbody>`;
+
+  data.dates.forEach((d, i) => {
+    const rowTotal = colCats.reduce((s, c) => s + (c.data[i] || 0), 0);
+    h += `<tr><td>${d}</td>`;
+    colCats.forEach(c => {
+      const v = c.data[i] || 0;
+      if (yMode === 'percent') {
+        const pct = rowTotal === 0 ? 0 : Math.round(Math.abs(v) / Math.abs(rowTotal) * 1000) / 10;
+        h += `<td class="amount">${pct.toFixed(1)}%</td>`;
+      } else {
+        h += `<td class="amount positive">${fmtAmt(v, cur)}</td>`;
+      }
+    });
+    if (yMode === 'percent') {
+      h += `<td class="amount">100%</td>`;
+    } else {
+      h += `<td class="amount positive">${fmtAmt(rowTotal, cur)}</td>`;
+    }
+    h += `</tr>`;
+  });
+
+  // Totals row
+  h += `<tr style="font-weight:600"><td>Total</td>`;
+  colCats.forEach(c => {
+    h += `<td class="amount positive">${fmtAmt(c.total, cur)}</td>`;
+  });
+  const grandTotal = colCats.reduce((s,c) => s+c.total, 0);
+  h += `<td class="amount positive">${fmtAmt(grandTotal, cur)}</td></tr>`;
+
+  h += `</tbody></table>`;
+  document.getElementById('rpt-table-wrap').innerHTML = h;
+}
+
+/* ── CSV export ────────────────────────────────────────────────── */
+function exportCSV() {
+  if (!lastData) return;
+  const cur       = lastData.reportCurrency || lastData.currency;
+  const topN      = getTopN();
+  const nameStyle = getNameStyle();
+  const sorted    = [...lastData.categories].sort((a,b) => b.total - a.total);
+  const top       = sorted.slice(0, topN);
+  const rest      = sorted.slice(topN);
+
+  const colCats = top.map(c => ({...c, label: nameStyle === 'full' ? c.full_name : c.name}));
+  if (rest.length) {
+    const otherData = lastData.dates.map((_, di) =>
+      rest.reduce((s, c) => s + (c.data[di] || 0), 0)
+    );
+    colCats.push({label: 'Other', data: otherData});
+  }
+
+  const rows = [['Date', ...colCats.map(c => c.label), 'Total']];
+  lastData.dates.forEach((d, i) => {
+    const rowTotal = colCats.reduce((s,c) => s + (c.data[i] || 0), 0);
+    rows.push([d, ...colCats.map(c => c.data[i] || 0), rowTotal]);
+  });
+  const csv = rows.map(r => r.map(v => `"${v}"`).join(',')).join('\r\n');
+  const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = (lastData.title || REPORT_MODE).replace(/[^a-z0-9_\-]/gi,'_') + '.csv';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+/* ── PDF export ────────────────────────────────────────────────── */
+function exportPDF() {
+  if (!lastData) return;
+  const cur    = lastData.reportCurrency || lastData.currency;
+  const canvas = document.getElementById('rpt-chart');
+  const chartImg = canvas ? canvas.toDataURL('image/png') : '';
+  const now   = new Date().toISOString().slice(0,10);
+  const start = lastData.dates[0] || '';
+  const end   = lastData.dates[lastData.dates.length - 1] || '';
+  const step  = document.getElementById('rpt-step')?.selectedOptions[0]?.text || '';
+  const yMode = getYMode();
+  const topN  = getTopN();
+  const nameStyle = getNameStyle();
+
+  const sorted  = [...lastData.categories].sort((a,b) => b.total - a.total);
+  const top     = sorted.slice(0, topN);
+  const rest    = sorted.slice(topN);
+  const colCats = top.map(c => ({...c, label: nameStyle === 'full' ? c.full_name : c.name}));
+  if (rest.length) {
+    const otherData = lastData.dates.map((_, di) =>
+      rest.reduce((s, c) => s + (c.data[di] || 0), 0)
+    );
+    colCats.push({label: 'Other', data: otherData, total: rest.reduce((s,c)=>s+c.total,0)});
+  }
+
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+  let tableRows = '';
+  lastData.dates.forEach((d, i) => {
+    const rowTotal = colCats.reduce((s,c) => s+(c.data[i]||0), 0);
+    tableRows += `<tr><td>${d}</td>`;
+    colCats.forEach(c => {
+      const v = c.data[i] || 0;
+      if (yMode === 'percent') {
+        const pct = rowTotal === 0 ? 0 : Math.round(Math.abs(v)/Math.abs(rowTotal)*1000)/10;
+        tableRows += `<td class="num">${pct.toFixed(1)}%</td>`;
+      } else {
+        tableRows += `<td class="num pos">${esc(fmtAmt(v, cur))}</td>`;
+      }
+    });
+    tableRows += yMode === 'percent'
+      ? `<td class="num">100%</td></tr>`
+      : `<td class="num pos">${esc(fmtAmt(rowTotal, cur))}</td></tr>`;
+  });
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>${esc(lastData.title)}</title>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color:#111; margin:32px 40px; font-size:11pt; }
+.brand { font-size:10pt; font-weight:700; color:#1a3320; letter-spacing:.06em; text-transform:uppercase; margin-bottom:10px; }
+h1 { font-size:22pt; font-weight:700; margin-bottom:4px; }
+.meta { font-size:9pt; color:#666; margin-bottom:28px; padding-bottom:14px; border-bottom:2px solid #1a3320; }
+img.chart { width:100%; height:auto; display:block; margin-bottom:28px; }
+table { width:100%; border-collapse:collapse; font-size:9pt; }
+thead th { text-align:left; padding:6px 8px; font-size:8pt; text-transform:uppercase; letter-spacing:.06em; color:#555; border-bottom:2px solid #ccc; }
+thead th.num { text-align:right; }
+td { padding:5px 8px; border-bottom:1px solid #e8e8e8; }
+td.num { text-align:right; font-variant-numeric:tabular-nums; }
+tbody tr:nth-child(even) td { background:#f7f7f7; }
+.pos { color:#1e7a38; }
+</style></head><body>
+<div class="brand">WebCash</div>
+<h1>${esc(lastData.title)}</h1>
+<p class="meta">${esc(start)} – ${esc(end)} &nbsp;·&nbsp; ${esc(step)} &nbsp;·&nbsp; ${esc(cur)} &nbsp;·&nbsp; Generated ${now}</p>
+${chartImg ? `<img class="chart" src="${chartImg}">` : ''}
+<table>
+<thead><tr><th>Date</th>${colCats.map(c=>`<th class="num">${esc(c.label)}</th>`).join('')}<th class="num">Total</th></tr></thead>
+<tbody>${tableRows}</tbody>
+</table></body></html>`;
+
+  const win = window.open('', '_blank', 'width=880,height=700');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { win.print(); win.close(); }, 600);
+}
+</script>
+{% endblock %}

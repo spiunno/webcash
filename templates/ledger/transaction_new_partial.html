@@ -55,14 +55,11 @@
       <tbody>
         <tr>
           <td style="padding:4px 6px;">
-            <select name="to_account" id="new-to-account"
-                    style="width:100%;padding:4px 6px;font-size:.82rem;
-                           border:1px solid var(--border);border-radius:4px;">
-              <option value="">— select account —</option>
-              {% for acc in all_accounts %}
-              <option value="{{ acc.id }}">{{ acc.full_path }}</option>
-              {% endfor %}
-            </select>
+            <div class="acct-picker" id="new-to-account-picker">
+              <input type="text" class="acct-picker-search" placeholder="Cerca conto…" autocomplete="off">
+              <input type="hidden" name="to_account" id="new-to-account" class="acct-picker-value" value="">
+              <div class="acct-picker-drop"></div>
+            </div>
           </td>
           <td style="padding:4px 6px;">
             <input type="text" name="debit" id="new-debit" placeholder="0.00"
@@ -155,6 +152,98 @@
 {"id":{{ account.id }},"name":"{{ account.name|escapejs }}","ccy":"{{ account.commodity_mnemonic }}"}
 </script>
 <script>
+// ── Account Picker ────────────────────────────────────────────────────────
+function initAccountPicker(pickerEl, accounts, selectedId) {
+  const search = pickerEl.querySelector('.acct-picker-search');
+  const hidden = pickerEl.querySelector('.acct-picker-value');
+  const drop   = pickerEl.querySelector('.acct-picker-drop');
+  if (!search || !hidden || !drop) return;
+
+  let confirmedId = selectedId ? String(selectedId) : (hidden.value ? String(hidden.value) : '');
+
+  if (confirmedId) {
+    const acc = accounts.find(a => String(a.id) === confirmedId);
+    if (acc) { search.value = acc.name; hidden.value = confirmedId; search.classList.add('has-value'); }
+  }
+
+  let focusedIdx = -1;
+  let results = [];
+
+  function esc(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  function hlMark(text, q) {
+    if (!q) return esc(text);
+    const lo = text.toLowerCase(), lq = q.toLowerCase();
+    const i = lo.indexOf(lq);
+    if (i < 0) return esc(text);
+    return esc(text.slice(0,i)) + '<mark>' + esc(text.slice(i, i+q.length)) + '</mark>' + esc(text.slice(i+q.length));
+  }
+
+  function render(q) {
+    const lq = (q || '').toLowerCase();
+    results = lq ? accounts.filter(a => a.name.toLowerCase().includes(lq)) : accounts.slice();
+    focusedIdx = -1;
+    drop.innerHTML = results.length
+      ? results.map((a,i) => `<div class="acct-picker-opt" data-idx="${i}">${hlMark(a.name, q)}</div>`).join('')
+      : '<div class="acct-picker-empty">Nessun conto trovato</div>';
+    drop.classList.add('open');
+  }
+
+  function pick(acc) {
+    confirmedId = String(acc.id);
+    hidden.value = confirmedId;
+    search.value = acc.name;
+    search.classList.add('has-value');
+    drop.classList.remove('open');
+    focusedIdx = -1;
+    hidden.dispatchEvent(new Event('change', {bubbles: true}));
+  }
+
+  function restore() {
+    drop.classList.remove('open');
+    if (confirmedId) {
+      const acc = accounts.find(a => String(a.id) === confirmedId);
+      if (acc) { hidden.value = confirmedId; search.value = acc.name; search.classList.add('has-value'); return; }
+    }
+    hidden.value = '';
+    search.value = '';
+    search.classList.remove('has-value');
+  }
+
+  function moveFocus(delta) {
+    const opts = drop.querySelectorAll('.acct-picker-opt');
+    if (!opts.length) return;
+    opts[focusedIdx]?.classList.remove('focused');
+    focusedIdx = Math.max(0, Math.min(focusedIdx + delta, results.length - 1));
+    opts[focusedIdx]?.classList.add('focused');
+    opts[focusedIdx]?.scrollIntoView({block:'nearest'});
+  }
+
+  search.addEventListener('focus', () => { search.select(); render(''); });
+  search.addEventListener('input', () => { hidden.value = ''; search.classList.remove('has-value'); render(search.value.trim()); });
+  search.addEventListener('blur', () => setTimeout(restore, 120));
+  search.addEventListener('keydown', e => {
+    if (!drop.classList.contains('open')) { render(search.value.trim()); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveFocus(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveFocus(-1); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (results[focusedIdx]) pick(results[focusedIdx]); }
+    else if (e.key === 'Escape') { e.preventDefault(); restore(); search.blur(); }
+  });
+  drop.addEventListener('mousedown', e => {
+    const opt = e.target.closest('.acct-picker-opt');
+    if (!opt) return;
+    e.preventDefault();
+    const acc = results[parseInt(opt.dataset.idx, 10)];
+    if (acc) pick(acc);
+  });
+
+  pickerEl._setPickerValue = function(id) {
+    const acc = accounts.find(a => String(a.id) === String(id));
+    if (acc) pick(acc);
+    else { confirmedId = ''; hidden.value = ''; search.value = ''; search.classList.remove('has-value'); }
+  };
+}
+
 (function(){
   const form   = document.getElementById('new-txn-form');
   const modeIn = document.getElementById('new-mode');
@@ -192,7 +281,6 @@
 
   // ── Exchange rate (cross-currency) ───────────────────────────────────
   const acctMap = {};
-  // accounts array is declared below; wire up after it's set
   function initExchangeRate() {
     const rateRow      = document.getElementById('new-rate-row');
     const rateFromCcy  = document.getElementById('new-rate-from-ccy');
@@ -200,7 +288,7 @@
     const rateInput    = document.getElementById('new-rate-value');
     const rateComputed = document.getElementById('new-rate-computed');
     const toQtyHidden  = document.getElementById('new-to-quantity');
-    const toSel        = document.getElementById('new-to-account');
+    const toSel        = document.getElementById('new-to-account'); // hidden input
     const debitIn      = document.getElementById('new-debit');
     const creditIn     = document.getElementById('new-credit');
 
@@ -283,8 +371,8 @@
     descIn.value = r.description;
     acDrop.style.display = 'none';
     if (!r.multi && r.account_id) {
-      const sel = document.getElementById('new-to-account');
-      if (sel) sel.value = r.account_id;
+      const picker = document.getElementById('new-to-account-picker');
+      if (picker?._setPickerValue) picker._setPickerValue(r.account_id);
       const debit = document.getElementById('new-debit');
       const credit = document.getElementById('new-credit');
       if (r.debit) { debit.value = r.amount; credit.value = ''; }
@@ -302,19 +390,17 @@
   accounts.forEach(a => acctMap[a.id] = a);
   initExchangeRate();
 
-  function accountOptions(selectedId) {
-    return accounts.map(a =>
-      `<option value="${a.id}" ${a.id == selectedId ? 'selected' : ''}>${a.name.replace(/</g,'&lt;')}</option>`
-    ).join('');
-  }
+  // Initialize the simple-mode to_account picker
+  initAccountPicker(document.getElementById('new-to-account-picker'), accounts, '');
 
   function splitRow(idx, accId, debit, credit, memo) {
     return `<tr class="nm-split-row">
       <td style="padding:4px 6px;">
-        <select name="split_${idx}_account" required
-                style="width:100%;padding:4px 6px;font-size:.82rem;border:1px solid var(--border);border-radius:4px;">
-          <option value="">— account —</option>${accountOptions(accId)}
-        </select>
+        <div class="acct-picker">
+          <input type="text" class="acct-picker-search" placeholder="Cerca conto…" autocomplete="off">
+          <input type="hidden" class="acct-picker-value" name="split_${idx}_account" value="${accId || ''}">
+          <div class="acct-picker-drop"></div>
+        </div>
       </td>
       <td style="padding:4px 6px;">
         <input type="text" name="split_${idx}_memo" value="${memo}"
@@ -335,6 +421,11 @@
     </tr>`;
   }
 
+  function initSplitRowPicker(row, accId) {
+    const picker = row.querySelector('.acct-picker');
+    if (picker) initAccountPicker(picker, accounts, accId || '');
+  }
+
   const splitsBody = document.getElementById('new-splits-body');
 
   function renumberSplits() {
@@ -349,12 +440,18 @@
     const idx = splitsBody.querySelectorAll('.nm-split-row').length;
     splitsBody.insertAdjacentHTML('beforeend', splitRow(idx, '', '', '', ''));
     const row = splitsBody.lastElementChild;
+    initSplitRowPicker(row, '');
     row.dataset.autoBalance = '1';
     row.style.background = 'color-mix(in srgb, var(--accent) 8%, transparent)';
     row.style.outline = '1px dashed var(--accent)';
     attachRemove(row);
     row.querySelector('.nm-debit').addEventListener('input', () => { delete row.dataset.autoBalance; row.style.outline = ''; row.style.background = ''; });
     row.querySelector('.nm-credit').addEventListener('input', () => { delete row.dataset.autoBalance; row.style.outline = ''; row.style.background = ''; });
+    row.querySelector('.acct-picker-value').addEventListener('change', () => {
+      delete row.dataset.autoBalance;
+      row.style.outline = ''; row.style.background = '';
+      updateBalance();
+    });
     return row;
   }
 
@@ -378,10 +475,9 @@
       else              { di.value = (-rounded).toFixed(2); ci.value = ''; }
       el.textContent = `Out of balance: ${rounded > 0 ? '+' : ''}${rounded.toFixed(2)} — select account below`;
       el.className = 'balance-warn';
-      autoRow.querySelector('select').focus();
     } else {
       if (autoRow) {
-        if (!autoRow.querySelector('select').value && splitsBody.querySelectorAll('.nm-split-row').length > 2) {
+        if (!autoRow.querySelector('.acct-picker-value').value && splitsBody.querySelectorAll('.nm-split-row').length > 2) {
           autoRow.remove(); renumberSplits();
         } else {
           delete autoRow.dataset.autoBalance;
@@ -407,13 +503,17 @@
     if (multiActive) {
       const debit  = (parseFloat(document.getElementById('new-debit').value.replace(',','.')) || 0).toFixed(2);
       const credit = (parseFloat(document.getElementById('new-credit').value.replace(',','.')) || 0).toFixed(2);
-      const toSel  = document.getElementById('new-to-account');
-      const toId   = toSel ? toSel.value : '';
+      const toHidden = document.getElementById('new-to-account');
+      const toId   = toHidden ? toHidden.value : '';
       const memo   = document.getElementById('new-memo').value;
       splitsBody.innerHTML =
         splitRow(0, curAcc.id, debit, credit, memo) +
         splitRow(1, toId, credit, debit, '');
-      splitsBody.querySelectorAll('.nm-split-row').forEach(attachRemove);
+      splitsBody.querySelectorAll('.nm-split-row').forEach(row => {
+        const accId = row.querySelector('.acct-picker-value').value;
+        initSplitRowPicker(row, accId);
+        attachRemove(row);
+      });
       splitsBody.addEventListener('input', updateBalance);
       updateBalance();
       simple.style.display = 'none'; multi.style.display = '';
@@ -427,8 +527,10 @@
   document.getElementById('new-add-split').addEventListener('click', () => {
     const idx = splitsBody.querySelectorAll('.nm-split-row').length;
     splitsBody.insertAdjacentHTML('beforeend', splitRow(idx, '', '', '', ''));
-    attachRemove(splitsBody.lastElementChild);
-    splitsBody.lastElementChild.querySelector('select').focus();
+    const newRow = splitsBody.lastElementChild;
+    initSplitRowPicker(newRow, '');
+    attachRemove(newRow);
+    newRow.querySelector('.acct-picker-search')?.focus();
     updateBalance();
   });
 

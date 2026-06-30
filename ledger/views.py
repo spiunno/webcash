@@ -11,7 +11,7 @@ from django.db.models import Sum
 from django.contrib import messages
 from django.http import JsonResponse
 
-from .models import Account, Transaction, Split, UserPreferences, Price, CURRENCIES, get_price, ImportJob
+from .models import Account, Transaction, Split, UserPreferences, Price, CURRENCIES, get_price, ImportJob, SystemSettings
 from .gnucash_import import import_file
 
 
@@ -80,26 +80,15 @@ def dashboard(request):
 # Account register
 # ---------------------------------------------------------------------------
 
-@login_required
-def account_register(request, account_id):
-    account = get_object_or_404(Account, pk=account_id)
-    account_tree = _build_tree()
+_REGISTER_PAGE_SIZE = 100
 
-    splits = (
-        Split.objects
-        .filter(account=account)
-        .select_related('transaction')
-        .prefetch_related('transaction__splits__account')
-        .order_by('transaction__post_date', 'transaction__enter_date')
-    )
 
-    # Compute running balance
+def _build_register_rows(account, splits, balance_before):
     rows = []
-    running = Decimal('0')
+    running = balance_before
     for split in splits:
         display_amount = split.quantity_num if split.quantity_num is not None else split.value_num
         running += display_amount * account.normal_balance
-        # Determine the "other side" label
         other_splits = [s for s in split.transaction.splits.all() if s.pk != split.pk]
         if len(other_splits) == 1:
             other_label = other_splits[0].account.name
@@ -107,7 +96,6 @@ def account_register(request, account_id):
             other_label = 'Split transaction'
         else:
             other_label = '—'
-
         other_account_id = other_splits[0].account_id if len(other_splits) == 1 else None
         rows.append({
             'split': split,
@@ -117,22 +105,110 @@ def account_register(request, account_id):
             'running': running,
             'display_amount': display_amount,
         })
+    return rows
 
+
+def _make_account_prefs(account, user):
     import math as _math
     sf = account.smallest_fraction or 100
     dp = round(_math.log10(sf)) if sf > 1 else 0
-    # Build a prefs-like object carrying decimal_places for this account's fraction
-    base_prefs = UserPreferences.for_user(request.user)
+    base_prefs = UserPreferences.for_user(user)
     class _AccountPrefs:
         decimal_separator = base_prefs.decimal_separator
         decimal_places    = dp
-    account_prefs = _AccountPrefs()
+    return _AccountPrefs()
+
+
+@login_required
+def account_register(request, account_id):
+    from django.db.models import Sum
+    from django.db.models.functions import Coalesce
+
+    account = get_object_or_404(Account, pk=account_id)
+    account_tree = _build_tree()
+
+    base_qs = (
+        Split.objects
+        .filter(account=account)
+        .order_by('transaction__post_date', 'transaction__enter_date', 'pk')
+    )
+    total_count = base_qs.count()
+    offset = max(0, total_count - _REGISTER_PAGE_SIZE)
+
+    if offset > 0:
+        balance_before_raw = (
+            base_qs[:offset]
+            .aggregate(total=Sum(Coalesce('quantity_num', 'value_num')))['total']
+            or Decimal('0')
+        )
+        balance_before = balance_before_raw * account.normal_balance
+    else:
+        balance_before = Decimal('0')
+
+    splits = list(
+        base_qs[offset:]
+        .select_related('transaction')
+        .prefetch_related('transaction__splits__account')
+    )
+    rows = _build_register_rows(account, splits, balance_before)
 
     return render(request, 'ledger/register.html', {
         'account': account,
         'rows': rows,
         'account_tree': account_tree,
-        'account_prefs': account_prefs,
+        'account_prefs': _make_account_prefs(account, request.user),
+        'current_offset': offset,
+        'has_more': offset > 0,
+    })
+
+
+@login_required
+def account_register_rows(request, account_id):
+    from django.db.models import Sum
+    from django.db.models.functions import Coalesce
+    from django.http import HttpResponse
+
+    account = get_object_or_404(Account, pk=account_id)
+
+    try:
+        before_offset = int(request.GET.get('before', '0'))
+    except ValueError:
+        before_offset = 0
+
+    if before_offset <= 0:
+        return HttpResponse('')
+
+    start = max(0, before_offset - _REGISTER_PAGE_SIZE)
+
+    base_qs = (
+        Split.objects
+        .filter(account=account)
+        .order_by('transaction__post_date', 'transaction__enter_date', 'pk')
+    )
+
+    if start > 0:
+        balance_before_raw = (
+            base_qs[:start]
+            .aggregate(total=Sum(Coalesce('quantity_num', 'value_num')))['total']
+            or Decimal('0')
+        )
+        balance_before = balance_before_raw * account.normal_balance
+    else:
+        balance_before = Decimal('0')
+
+    splits = list(
+        base_qs[start:before_offset]
+        .select_related('transaction')
+        .prefetch_related('transaction__splits__account')
+    )
+    rows = _build_register_rows(account, splits, balance_before)
+
+    return render(request, 'ledger/register_rows_partial.html', {
+        'account': account,
+        'rows': rows,
+        'account_prefs': _make_account_prefs(account, request.user),
+        'new_offset': start,
+        'has_more': start > 0,
     })
 
 
@@ -273,7 +349,9 @@ def transaction_duplicate(request, txn_id):
 @login_required
 def transaction_edit(request, txn_id):
     txn = get_object_or_404(Transaction, pk=txn_id)
-    all_accounts = Account.objects.order_by('account_type', 'name')
+    prefs = UserPreferences.for_user(request.user)
+    accts_qs = Account.objects if prefs.show_hidden_accounts else Account.objects.filter(hidden=False)
+    all_accounts = accts_qs.order_by('account_type', 'name')
     account_tree = _build_tree()
     back = request.GET.get('back', '')
 
@@ -291,7 +369,8 @@ def transaction_edit(request, txn_id):
                 break
             value_str = request.POST.get(f'split_{i}_value', '').strip()
             memo = request.POST.get(f'split_{i}_memo', '').strip()
-            split_data.append((account_id, value_str, memo))
+            qty_str = request.POST.get(f'split_{i}_quantity', '').strip()
+            split_data.append((account_id, value_str, memo, qty_str))
             i += 1
 
         # Validate
@@ -302,7 +381,7 @@ def transaction_edit(request, txn_id):
 
         parsed_splits = []
         total = Decimal('0')
-        for idx, (account_id, value_str, memo) in enumerate(split_data):
+        for idx, (account_id, value_str, memo, qty_str) in enumerate(split_data):
             try:
                 account = Account.objects.get(pk=account_id)
             except Account.DoesNotExist:
@@ -313,8 +392,14 @@ def transaction_edit(request, txn_id):
             except Exception:
                 errors.append(f'Split {idx+1}: invalid amount "{value_str}".')
                 continue
+            qty = None
+            if qty_str:
+                try:
+                    qty = Decimal(qty_str.replace(',', '.'))
+                except Exception:
+                    pass
             total += value
-            parsed_splits.append((account, value, memo))
+            parsed_splits.append((account, value, memo, qty))
 
         if not errors and total != Decimal('0'):
             errors.append(f'Splits are not balanced (sum = {total}). Debits must equal credits.')
@@ -328,8 +413,14 @@ def transaction_edit(request, txn_id):
             txn.description = description
             txn.save()
             txn.splits.all().delete()
-            for account, value, memo in parsed_splits:
-                Split.objects.create(transaction=txn, account=account, value_num=value, memo=memo)
+            for account, value, memo, qty in parsed_splits:
+                quantity_num = qty
+                if quantity_num is None and account.commodity_mnemonic != txn.currency:
+                    rate = get_price(txn.currency, account.commodity_mnemonic, txn.post_date)
+                    if rate:
+                        quantity_num = value * rate
+                Split.objects.create(transaction=txn, account=account, value_num=value,
+                                     quantity_num=quantity_num, memo=memo)
             messages.success(request, 'Transaction saved.')
             if request.GET.get('partial') or request.POST.get('partial'):
                 from django.http import JsonResponse
@@ -337,6 +428,7 @@ def transaction_edit(request, txn_id):
             return redirect(back or 'dashboard')
 
     splits = list(txn.splits.select_related('account').all())
+    account_currencies = {str(acc.id): acc.commodity_mnemonic for acc in all_accounts}
     ctx = {
         'txn': txn,
         'splits': splits,
@@ -344,6 +436,8 @@ def transaction_edit(request, txn_id):
         'account_tree': account_tree,
         'errors': errors,
         'back': back,
+        'account_currencies': json.dumps(account_currencies),
+        'txn_currency': txn.currency,
     }
     if request.GET.get('partial') or request.POST.get('partial'):
         return render(request, 'ledger/transaction_edit_partial.html', ctx)
@@ -357,7 +451,9 @@ def transaction_edit(request, txn_id):
 @login_required
 def transaction_new(request, account_id):
     account = get_object_or_404(Account, pk=account_id)
-    all_accounts = Account.objects.order_by('account_type', 'name')
+    prefs = UserPreferences.for_user(request.user)
+    accts_qs = Account.objects if prefs.show_hidden_accounts else Account.objects.filter(hidden=False)
+    all_accounts = accts_qs.order_by('account_type', 'name')
     account_tree = _build_tree()
     errors = []
 
@@ -452,8 +548,15 @@ def transaction_new(request, account_id):
                     post_date=post_date, description=description,
                     currency=account.commodity_mnemonic,
                 )
+                txn_ccy = account.commodity_mnemonic
                 for acc, value, memo in parsed_splits:
-                    Split.objects.create(transaction=txn, account=acc, value_num=value, memo=memo)
+                    quantity_num = None
+                    if acc.commodity_mnemonic != txn_ccy:
+                        rate = get_price(txn_ccy, acc.commodity_mnemonic, post_date)
+                        if rate:
+                            quantity_num = value * rate
+                    Split.objects.create(transaction=txn, account=acc, value_num=value,
+                                         quantity_num=quantity_num, memo=memo)
                 request.session['last_txn_date'] = post_date_str
                 if request.GET.get('partial') or request.POST.get('partial'):
                     from django.http import JsonResponse
@@ -636,6 +739,23 @@ def reconcile_cancel(request, account_id):
     session_key = f'reconcile_{account_id}'
     request.session.pop(session_key, None)
     return redirect('account_register', account_id=account_id)
+
+
+@login_required
+def split_unreconcile(request, split_id):
+    if request.method != 'POST':
+        from django.http import HttpResponseNotAllowed
+        return HttpResponseNotAllowed(['POST'])
+    split = get_object_or_404(Split, pk=split_id)
+    if not split.reconciled:
+        from django.http import JsonResponse
+        return JsonResponse({'error': 'not_reconciled'}, status=400)
+    split.reconciled = False
+    split.reconcile_date = None
+    split.confirmed = False
+    split.save(update_fields=['reconciled', 'reconcile_date', 'confirmed'])
+    from django.http import JsonResponse
+    return JsonResponse({'ok': True})
 
 
 @login_required
@@ -854,9 +974,18 @@ def networth_report_data(request):
     report_currency = request.GET.get('currency', 'EUR').upper()
     account_ids_str = request.GET.get('accounts', '')
 
+    def _parse_date(s):
+        from datetime import datetime as _dt
+        for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y'):
+            try:
+                return _dt.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        raise ValueError(f'Cannot parse date: {s}')
+
     try:
-        start = date_type.fromisoformat(start_str)
-        end   = date_type.fromisoformat(end_str)
+        start = _parse_date(start_str)
+        end   = _parse_date(end_str)
     except ValueError:
         return JsonResponse({'error': 'Invalid dates'}, status=400)
     if start > end:
@@ -914,6 +1043,190 @@ def networth_report_data(request):
 
     result['currency'] = report_currency
     return JsonResponse(result)
+
+
+# ---------------------------------------------------------------------------
+# Income / Expense flow reports
+# ---------------------------------------------------------------------------
+
+@login_required
+def income_report(request):
+    return _flow_report_view(request, 'income')
+
+
+@login_required
+def expense_report(request):
+    return _flow_report_view(request, 'expense')
+
+
+def _flow_report_view(request, mode):
+    import json as _json
+    account_tree = _build_tree()
+    FLOW_TYPES = {Account.INCOME} if mode == 'income' else {Account.EXPENSE}
+    all_accounts = list(Account.objects.all())
+    accounts_by_id = {a.pk: a for a in all_accounts}
+
+    def has_flow_descendant(acc_id, visited=None):
+        if visited is None:
+            visited = set()
+        if acc_id in visited:
+            return False
+        visited.add(acc_id)
+        a = accounts_by_id.get(acc_id)
+        if not a:
+            return False
+        if a.account_type in FLOW_TYPES:
+            return True
+        return any(has_flow_descendant(c.pk, visited) for c in all_accounts if c.parent_id == acc_id)
+
+    accounts_json = []
+    for a in all_accounts:
+        if a.account_type in FLOW_TYPES or (a.placeholder and has_flow_descendant(a.pk)):
+            accounts_json.append({
+                'id': a.pk,
+                'name': a.name,
+                'full_name': a.full_path(),
+                'type': a.account_type,
+                'parent': a.parent_id,
+                'hidden': a.hidden,
+                'placeholder': a.placeholder,
+                'commodity': a.commodity_mnemonic,
+            })
+
+    prefs = UserPreferences.for_user(request.user)
+    return render(request, 'ledger/flow_report.html', {
+        'account_tree': account_tree,
+        'accounts_json': _json.dumps(accounts_json),
+        'currencies': CURRENCIES,
+        'prefs': prefs,
+        'mode': mode,
+        'mode_label': 'Income' if mode == 'income' else 'Expense',
+    })
+
+
+@login_required
+def income_report_data(request):
+    return _flow_report_data(request, 'income')
+
+
+@login_required
+def expense_report_data(request):
+    return _flow_report_data(request, 'expense')
+
+
+def _flow_report_data(request, mode):
+    from datetime import date as date_type, timedelta
+    from collections import defaultdict
+
+    start_str = request.GET.get('start', '')
+    end_str   = request.GET.get('end', '')
+    step      = request.GET.get('step', 'month')
+    report_currency = request.GET.get('currency', 'EUR').upper()
+    account_ids_str = request.GET.get('accounts', '')
+
+    def _parse_date(s):
+        from datetime import datetime as _dt
+        for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y'):
+            try:
+                return _dt.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        raise ValueError(f'Cannot parse date: {s}')
+
+    try:
+        start = _parse_date(start_str)
+        end   = _parse_date(end_str)
+    except ValueError:
+        return JsonResponse({'error': 'Invalid dates'}, status=400)
+    if start > end:
+        return JsonResponse({'error': 'Start must be before end'}, status=400)
+
+    FLOW_TYPES = {Account.INCOME} if mode == 'income' else {Account.EXPENSE}
+
+    account_ids = [int(x) for x in account_ids_str.split(',') if x.strip().isdigit()] if account_ids_str.strip() else []
+    if not account_ids:
+        return JsonResponse({'dates': [], 'categories': [], 'currency': report_currency})
+
+    accounts = list(Account.objects.filter(pk__in=account_ids, account_type__in=FLOW_TYPES))
+    if not accounts:
+        return JsonResponse({'dates': [], 'categories': [], 'currency': report_currency})
+
+    all_accounts_list = list(Account.objects.all())
+    accounts_by_id    = {a.pk: a for a in all_accounts_list}
+
+    # Build date intervals
+    interval_starts, current = [], start
+    while current <= end and len(interval_starts) < 500:
+        interval_starts.append(current)
+        current = _next_report_date(current, step)
+
+    def get_category(account):
+        """Return the ancestor 2 levels below root (first real sub-category)."""
+        chain, a, visited = [], account, set()
+        while a and a.pk not in visited:
+            visited.add(a.pk)
+            chain.insert(0, a)
+            a = accounts_by_id.get(a.parent_id)
+        if len(chain) >= 3:
+            return chain[2]
+        if len(chain) == 2:
+            return chain[1]
+        return chain[0]
+
+    account_to_cat = {a.pk: get_category(a) for a in accounts}
+    cat_accounts   = {account_to_cat[a.pk].pk: account_to_cat[a.pk] for a in accounts}
+
+    # Prefetch splits for selected accounts
+    splits_by_account = defaultdict(list)
+    for s in (Split.objects
+              .filter(account_id__in=[a.pk for a in accounts])
+              .select_related('transaction')
+              .order_by('transaction__post_date')):
+        amt = s.quantity_num if s.quantity_num is not None else s.value_num
+        splits_by_account[s.account_id].append((s.transaction.post_date, amt))
+
+    price_cache = {}
+    def cached_price(mnemonic, d):
+        if mnemonic == report_currency:
+            return Decimal('1')
+        key = (mnemonic, d)
+        if key not in price_cache:
+            price_cache[key] = get_price(mnemonic, report_currency, d) or Decimal('1')
+        return price_cache[key]
+
+    n = len(interval_starts)
+    category_data = defaultdict(lambda: [Decimal('0')] * n)
+
+    for acc in accounts:
+        cat       = account_to_cat[acc.pk]
+        commodity = acc.commodity_mnemonic
+        for i, istart in enumerate(interval_starts):
+            iend = interval_starts[i + 1] - timedelta(days=1) if i + 1 < n else end
+            period_total = sum(
+                amt for dt, amt in splits_by_account[acc.pk]
+                if istart <= dt <= iend
+            )
+            display = period_total * acc.normal_balance
+            category_data[cat.pk][i] += display * cached_price(commodity, istart)
+
+    result_categories = []
+    for cat_id, cat_acc in cat_accounts.items():
+        data = [round(float(v), 2) for v in category_data[cat_id]]
+        result_categories.append({
+            'id':        cat_id,
+            'name':      cat_acc.name,
+            'full_name': cat_acc.full_path(),
+            'data':      data,
+            'total':     round(float(sum(abs(v) for v in category_data[cat_id])), 2),
+        })
+
+    result_categories.sort(key=lambda c: c['total'], reverse=True)
+
+    return JsonResponse({
+        'dates':      [str(d) for d in interval_starts],
+        'categories': result_categories,
+        'currency':   report_currency,
+    })
 
 
 def _next_report_date(d, step):
@@ -1102,12 +1415,100 @@ def preferences(request):
         prefs.currency_symbol = request.POST.get('currency_symbol', prefs.currency_symbol)[:5]
         prefs.currency_before = request.POST.get('currency_before') == '1'
         prefs.accent_color = request.POST.get('accent_color', prefs.accent_color)
+        prefs.show_hidden_accounts = request.POST.get('show_hidden_accounts') == '1'
         prefs.save()
         saved = True
     return render(request, 'ledger/preferences.html', {
         'prefs': prefs,
         'account_tree': account_tree,
         'saved': saved,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Profile
+# ---------------------------------------------------------------------------
+
+@login_required
+def profile(request):
+    user = request.user
+    prefs = UserPreferences.for_user(user)
+    saved_section = None
+
+    if request.method == 'POST':
+        section = request.POST.get('section')
+
+        if section == 'identity':
+            user.first_name = request.POST.get('first_name', '').strip()
+            user.last_name = request.POST.get('last_name', '').strip()
+            new_email = request.POST.get('email', '').strip()
+            if new_email and new_email != user.email:
+                user.email = new_email
+            user.save()
+            saved_section = 'identity'
+
+        elif section == 'password':
+            from django.contrib.auth import update_session_auth_hash
+            current = request.POST.get('current_password', '')
+            new1 = request.POST.get('new_password1', '')
+            new2 = request.POST.get('new_password2', '')
+            if not user.check_password(current):
+                messages.error(request, 'Current password is incorrect.')
+            elif new1 != new2:
+                messages.error(request, 'New passwords do not match.')
+            elif len(new1) < 8:
+                messages.error(request, 'New password must be at least 8 characters.')
+            else:
+                user.set_password(new1)
+                user.save()
+                update_session_auth_hash(request, user)
+                saved_section = 'password'
+
+        elif section == 'preferences':
+            prefs.language = request.POST.get('language', prefs.language)
+            prefs.date_format = request.POST.get('date_format', prefs.date_format)
+            prefs.decimal_separator = request.POST.get('decimal_separator', prefs.decimal_separator)
+            prefs.currency_symbol = request.POST.get('currency_symbol', prefs.currency_symbol)[:5]
+            prefs.currency_before = request.POST.get('currency_before') == '1'
+            prefs.accent_color = request.POST.get('accent_color', prefs.accent_color)
+            prefs.show_hidden_accounts = request.POST.get('show_hidden_accounts') == '1'
+            prefs.save()
+            saved_section = 'preferences'
+
+    return render(request, 'ledger/profile.html', {
+        'prefs': prefs,
+        'saved_section': saved_section,
+    })
+
+
+# ---------------------------------------------------------------------------
+# System Settings (staff only)
+# ---------------------------------------------------------------------------
+
+@login_required
+def system_settings(request):
+    if not request.user.is_staff:
+        messages.error(request, 'Access denied.')
+        return redirect('dashboard')
+
+    sys_settings = SystemSettings.get()
+    saved = False
+
+    if request.method == 'POST':
+        sys_settings.exchange_rate_api_key = request.POST.get('exchange_rate_api_key', '').strip()
+        sys_settings.exchange_rate_provider = request.POST.get('exchange_rate_provider', 'frankfurter')
+        sys_settings.base_currency = request.POST.get('base_currency', 'EUR').strip().upper()[:3]
+        sys_settings.maintenance_mode = request.POST.get('maintenance_mode') == '1'
+        sys_settings.registration_open = request.POST.get('registration_open') == '1'
+        sys_settings.notes = request.POST.get('notes', '').strip()
+        sys_settings.save()
+        saved = True
+
+    return render(request, 'ledger/system_settings.html', {
+        'prefs': UserPreferences.for_user(request.user),
+        'sys': sys_settings,
+        'saved': saved,
+        'currencies': CURRENCIES,
     })
 
 

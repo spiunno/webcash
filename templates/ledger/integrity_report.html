@@ -90,13 +90,13 @@ window.CURRENT_TAB = {id:'integrity-report', label:'Integrity Check', url:'{% ur
         padding:7px 18px;font-size:.83rem;
         border-bottom:{% if not forloop.last %}1px solid var(--border){% else %}none{% endif %};
       ">
-        <a href="{{ item.url }}" style="color:var(--text);text-decoration:none;flex:1;min-width:0;
+        <a href="{{ item.url }}?back={% url 'integrity_report' %}" style="color:var(--text);text-decoration:none;flex:1;min-width:0;
            white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
            title="{{ item.label }}">{{ item.label }}</a>
         {% if item.detail %}
         <span style="font-size:.77rem;color:var(--text-muted);white-space:nowrap;">{{ item.detail }}</span>
         {% endif %}
-        <a href="{{ item.url }}" style="font-size:.75rem;color:var(--accent);white-space:nowrap;">Edit →</a>
+        <a href="{{ item.url }}?back={% url 'integrity_report' %}" style="font-size:.75rem;color:var(--accent);white-space:nowrap;">Edit →</a>
       </div>
       {% endif %}
       {% endfor %}

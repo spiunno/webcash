@@ -1,0 +1,74 @@
+{% extends 'ledger/base.html' %}
+{% block title %}System Settings — WebCash{% endblock %}
+{% block breadcrumb %}System Settings{% endblock %}
+
+{% block content %}
+<div style="max-width:680px;">
+
+  {% if saved %}
+  <div class="message success" style="margin-bottom:20px;">Settings saved.</div>
+  {% endif %}
+
+  <form method="post">
+    {% csrf_token %}
+
+    <!-- ── Exchange Rates ───────────────────────────────────── -->
+    <div class="pref-section">
+      <div class="pref-section-title">Exchange Rate Provider</div>
+      <div class="pref-grid">
+        <div class="form-group" style="grid-column:1/-1;">
+          <label for="exchange_rate_provider">Provider</label>
+          <select id="exchange_rate_provider" name="exchange_rate_provider">
+            <option value="frankfurter" {% if sys.exchange_rate_provider == 'frankfurter' %}selected{% endif %}>Frankfurter (free, no key needed)</option>
+            <option value="exchangeratesapi" {% if sys.exchange_rate_provider == 'exchangeratesapi' %}selected{% endif %}>ExchangeRatesAPI.io (key required)</option>
+            <option value="openexchangerates" {% if sys.exchange_rate_provider == 'openexchangerates' %}selected{% endif %}>Open Exchange Rates (key required)</option>
+          </select>
+        </div>
+        <div class="form-group" style="grid-column:1/-1;">
+          <label for="exchange_rate_api_key">API key</label>
+          <input type="text" id="exchange_rate_api_key" name="exchange_rate_api_key"
+                 value="{{ sys.exchange_rate_api_key }}" placeholder="Leave blank for Frankfurter (free)">
+        </div>
+        <div class="form-group">
+          <label for="base_currency">Base currency</label>
+          <select id="base_currency" name="base_currency">
+            {% for code, label in currencies %}
+              <option value="{{ code }}" {% if sys.base_currency == code %}selected{% endif %}>{{ code }} – {{ label|slice:"6:" }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Access & Behaviour ──────────────────────────────── -->
+    <div class="pref-section">
+      <div class="pref-section-title">Access &amp; Behaviour</div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:10px;font-weight:400;cursor:pointer;">
+          <input type="checkbox" name="registration_open" value="1"
+                 {% if sys.registration_open %}checked{% endif %}>
+          Allow new users to self-register
+        </label>
+      </div>
+      <div class="form-group" style="margin-top:12px;">
+        <label style="display:flex;align-items:center;gap:10px;font-weight:400;cursor:pointer;">
+          <input type="checkbox" name="maintenance_mode" value="1"
+                 {% if sys.maintenance_mode %}checked{% endif %}>
+          Maintenance mode (disables non-admin access)
+        </label>
+      </div>
+    </div>
+
+    <!-- ── Notes ───────────────────────────────────────────── -->
+    <div class="pref-section">
+      <div class="pref-section-title">Admin Notes</div>
+      <div class="form-group">
+        <textarea name="notes" rows="4" style="width:100%;resize:vertical;">{{ sys.notes }}</textarea>
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Save settings</button>
+  </form>
+
+</div>
+{% endblock %}

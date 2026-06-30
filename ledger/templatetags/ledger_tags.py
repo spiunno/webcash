@@ -1,3 +1,4 @@
+import math as _math
 from decimal import Decimal
 from django import template
 
@@ -59,6 +60,25 @@ def num(value, prefs):
         return value
     dp  = getattr(prefs, 'decimal_places', 2)
     sep = getattr(prefs, 'decimal_separator', '.')
+    fmt = f'{abs(v):,.{dp}f}'
+    if sep == ',':
+        fmt = fmt.replace(',', 'X').replace('.', ',').replace('X', '.')
+    sign = '-' if v < 0 else ''
+    return f'{sign}{fmt}'
+
+
+@register.simple_tag
+def num_for_acct(value, base_prefs, account):
+    """Format value using the account's own smallest_fraction for decimal places."""
+    if value is None or account is None:
+        return value or ''
+    try:
+        v = Decimal(str(value))
+    except Exception:
+        return value
+    sf = account.smallest_fraction or 100
+    dp = round(_math.log10(sf)) if sf > 1 else 0
+    sep = getattr(base_prefs, 'decimal_separator', '.')
     fmt = f'{abs(v):,.{dp}f}'
     if sep == ',':
         fmt = fmt.replace(',', 'X').replace('.', ',').replace('X', '.')

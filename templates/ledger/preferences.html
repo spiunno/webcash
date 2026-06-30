@@ -75,6 +75,21 @@
   <div class="pref-section">
     <div class="pref-section-title">Appearance</div>
     <div class="form-group">
+      <label>Hidden accounts in pickers</label>
+      <div style="display:flex;gap:20px;margin-top:8px;">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+          <input type="radio" name="show_hidden_accounts" value="1"
+                 {% if prefs.show_hidden_accounts %}checked{% endif %}>
+          Show &nbsp;<span style="color:var(--text-muted);font-size:.85rem;">hidden accounts visible in pickers</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+          <input type="radio" name="show_hidden_accounts" value="0"
+                 {% if not prefs.show_hidden_accounts %}checked{% endif %}>
+          Hide &nbsp;<span style="color:var(--text-muted);font-size:.85rem;">hidden accounts excluded from pickers</span>
+        </label>
+      </div>
+    </div>
+    <div class="form-group">
       <label>Accent color</label>
       <div class="color-swatches">
         {% for value, label in prefs.ACCENT_CHOICES %}

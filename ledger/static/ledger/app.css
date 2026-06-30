@@ -131,14 +131,16 @@ body {
 .topnav-right {
   margin-left: auto;
   display: flex;
-  align-items: center;
-  padding: 0 14px;
+  align-items: stretch;
   font-size: .8rem;
   color: #7aaa7a;
-  gap: 12px;
 }
 .topnav-right a { color: #7aaa7a; text-decoration: none; }
 .topnav-right a:hover { color: #fff; }
+
+/* User menu in top-right — button inherits menu-btn but no ::after arrow (we inline ▾) */
+.user-menu-btn::after { display: none; }
+.menu-dropdown-right { left: auto; right: 0; }
 
 /* ================================================================
    TAB BAR
@@ -297,7 +299,7 @@ td.negative { color: var(--danger); }
 /* ---------- forms ---------- */
 .form-group { margin-bottom: 16px; }
 label { display: block; font-size: .83rem; font-weight: 500; margin-bottom: 5px; color: var(--text); }
-input[type=text], input[type=password], input[type=file], select {
+input[type=text], input[type=email], input[type=password], input[type=file], select {
   width: 100%;
   padding: 8px 12px;
   border: 1px solid var(--border);
@@ -640,4 +642,123 @@ input:focus, select:focus { border-color: var(--accent); }
 
   /* Print header (visible only in print) */
   .print-header { display: block !important; }
+}
+
+/* ── Datepicker ──────────────────────────────────────────────────── */
+.dp-wrap { position: relative; display: inline-block; width: 100%; }
+.dp-wrap input[type=text] { width: 100%; }
+.dp-cal {
+  position: absolute;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.14);
+  padding: 12px;
+  z-index: 9999;
+  min-width: 228px;
+  font-size: .85rem;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+}
+.dp-cal.dp-right { left: auto; right: 0; }
+.dp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  gap: 4px;
+}
+.dp-nav {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1.4;
+  color: var(--text);
+}
+.dp-nav:hover { background: var(--border); }
+.dp-month-year { font-weight: 600; font-size: .88rem; flex: 1; text-align: center; }
+.dp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+.dp-dow {
+  text-align: center;
+  font-size: .68rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 3px 0;
+}
+.dp-day {
+  text-align: center;
+  border: none;
+  background: none;
+  padding: 5px 2px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: .8rem;
+  color: var(--text);
+  line-height: 1;
+}
+.dp-day:hover { background: var(--surface); }
+.dp-today { color: var(--accent); font-weight: 700; }
+.dp-sel { background: var(--accent) !important; color: #fff !important; border-radius: 4px; }
+.dp-footer { margin-top: 8px; text-align: right; border-top: 1px solid var(--border); padding-top: 6px; }
+.dp-today-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 12px;
+  cursor: pointer;
+  font-size: .78rem;
+  color: var(--accent);
+}
+.dp-today-btn:hover { background: var(--surface); }
+
+/* ── Account Picker (searchable combobox) ─────────────────────── */
+.acct-picker { position: relative; }
+.acct-picker-search {
+  width: 100%; padding: 4px 6px; font-size: .82rem;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: #fff; color: var(--text);
+}
+.acct-picker-search:focus { border-color: var(--accent); outline: none; }
+.acct-picker-search.has-value { font-weight: 500; }
+.acct-picker-drop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0; right: 0;
+  background: #fff;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.14);
+  z-index: 400;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.acct-picker-drop.open { display: block; }
+.acct-picker-opt {
+  padding: 6px 10px;
+  font-size: .82rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+.acct-picker-opt:last-child { border-bottom: none; }
+.acct-picker-opt:hover,
+.acct-picker-opt.focused { background: var(--table-alt); }
+.acct-picker-opt mark {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: inherit; border-radius: 2px; padding: 0 1px; font-style: normal;
+}
+.acct-picker-empty {
+  padding: 8px 10px; font-size: .82rem; color: var(--text-muted); font-style: italic;
 }

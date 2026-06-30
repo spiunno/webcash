@@ -207,6 +207,7 @@ class UserPreferences(models.Model):
     currency_symbol = models.CharField(max_length=5, default='$')
     currency_before = models.BooleanField(default=True, help_text='Show currency symbol before the amount')
     accent_color = models.CharField(max_length=7, choices=ACCENT_CHOICES, default='#4a9238')
+    show_hidden_accounts = models.BooleanField(default=False, help_text='Show hidden accounts in account pickers')
 
     def __str__(self):
         return f'Preferences for {self.user.username}'
@@ -275,3 +276,42 @@ class ImportJob(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+
+
+class SystemSettings(models.Model):
+    """Singleton model for application-wide configuration."""
+    exchange_rate_api_key = models.CharField(
+        max_length=200, blank=True,
+        help_text='API key for a paid exchange-rate provider (leave blank to use the free Frankfurter API)',
+    )
+    exchange_rate_provider = models.CharField(
+        max_length=50, blank=True, default='frankfurter',
+        choices=[
+            ('frankfurter', 'Frankfurter (free, no key needed)'),
+            ('exchangeratesapi', 'ExchangeRatesAPI.io (key required)'),
+            ('openexchangerates', 'Open Exchange Rates (key required)'),
+        ],
+    )
+    base_currency = models.CharField(max_length=3, default='EUR')
+    maintenance_mode = models.BooleanField(default=False)
+    registration_open = models.BooleanField(default=False, help_text='Allow new users to self-register')
+    notes = models.TextField(blank=True, help_text='Internal admin notes')
+
+    class Meta:
+        verbose_name = 'System Settings'
+        verbose_name_plural = 'System Settings'
+
+    def save(self, *args, **kwargs):
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        pass
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def __str__(self):
+        return 'System Settings'

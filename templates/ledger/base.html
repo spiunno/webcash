@@ -6,7 +6,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}WebCash{% endblock %}</title>
-  <link rel="stylesheet" href="{% static 'ledger/app.css' %}?v=3">
+  <link rel="stylesheet" href="{% static 'ledger/app.css' %}?v=4">
   {# Each page declares its tab identity here, before the tab-bar script #}
   <script>{% block tab_script %}
     window.CURRENT_TAB = {id:'accounts', label:'Accounts', url:'{% url "accounts_overview" %}', closeable:false};
@@ -47,6 +47,8 @@
       <div class="menu-dropdown">
         <a href="{% url 'dashboard' %}">Summary Dashboard</a>
         <a href="{% url 'networth_report' %}">Net Worth Chart</a>
+        <a href="{% url 'income_report' %}">Income Chart</a>
+        <a href="{% url 'expense_report' %}">Expense Chart</a>
         <a href="{% url 'saved_reports' %}">Saved Reports</a>
         <a href="{% url 'integrity_report' %}">Integrity Check</a>
         <div class="menu-sep"></div>
@@ -54,17 +56,25 @@
       </div>
     </div>
 
-    <div class="menu-item" data-menu="settings">
-      <button class="menu-btn">Settings</button>
-      <div class="menu-dropdown">
-        <a href="{% url 'preferences' %}">Preferences…</a>
-        <div class="menu-sep"></div>
-        <a href="/admin/">Admin panel</a>
-      </div>
-    </div>
 
   </nav>
-  <div class="topnav-right">{{ user.get_full_name|default:user.username }}</div>
+  <div class="topnav-right">
+    <div class="menu-item" data-menu="user-menu">
+      <button class="menu-btn user-menu-btn">{{ user.get_full_name|default:user.username }} ▾</button>
+      <div class="menu-dropdown menu-dropdown-right">
+        <a href="{% url 'profile' %}">Profile</a>
+        {% if user.is_staff %}
+        <a href="{% url 'system_settings' %}">Settings</a>
+        {% endif %}
+        {% if user.is_superuser %}
+        <div class="menu-sep"></div>
+        <a href="/admin/">Django Admin</a>
+        {% endif %}
+        <div class="menu-sep"></div>
+        <a href="{% url 'logout' %}">Logout</a>
+      </div>
+    </div>
+  </div>
 </header>
 
 <!-- ===== TAB BAR ===== -->
@@ -201,5 +211,148 @@
 {% else %}
   {% block auth_content %}{% endblock %}
 {% endif %}
+
+<script>
+/* ── Datepicker — replaces all input[type=date] with a custom calendar ── */
+(function () {
+  const MONTHS = ['January','February','March','April','May','June',
+                  'July','August','September','October','November','December'];
+  const DAYS   = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+
+  function parseIso(v) {
+    if (!v) return null;
+    const parts = v.split('-').map(Number);
+    return parts.length === 3 ? {y: parts[0], m: parts[1], d: parts[2]} : null;
+  }
+
+  function toIso(y, m, d) {
+    return `${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+  }
+
+  function toDisplay(isoStr) {
+    const p = parseIso(isoStr);
+    if (!p) return '';
+    return `${String(p.d).padStart(2,'0')}/${String(p.m).padStart(2,'0')}/${p.y}`;
+  }
+
+  function parseDisplay(str) {
+    const m = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+    return m ? {y: parseInt(m[3]), m: parseInt(m[2]), d: parseInt(m[1])} : null;
+  }
+
+  function initDatepicker(native) {
+    // Wrap
+    const wrap = document.createElement('div');
+    wrap.className = 'dp-wrap';
+    native.parentNode.insertBefore(wrap, native);
+    wrap.appendChild(native);
+
+    // Display input
+    const disp = document.createElement('input');
+    disp.type = 'text';
+    disp.placeholder = 'dd/mm/yyyy';
+    disp.autocomplete = 'off';
+    disp.className = native.className;
+    if (native.style.cssText) disp.style.cssText = native.style.cssText;
+    if (native.id) { disp.id = native.id; native.removeAttribute('id'); }
+    if (native.required) { disp.required = true; native.required = false; }
+    if (native.value) disp.value = toDisplay(native.value);
+    native.type = 'hidden';
+    wrap.insertBefore(disp, native);
+
+    // Calendar popup (positioned inside wrap)
+    const cal = document.createElement('div');
+    cal.className = 'dp-cal';
+    cal.style.display = 'none';
+    wrap.appendChild(cal);
+
+    let curY, curM, open = false;
+
+    function openCal() {
+      const sel = parseIso(native.value);
+      const today = new Date();
+      curY = sel ? sel.y : today.getFullYear();
+      curM = sel ? sel.m : today.getMonth() + 1;
+      render();
+      cal.style.display = 'block';
+      // If too close to right edge, align right
+      const rect = wrap.getBoundingClientRect();
+      if (rect.left + 228 > window.innerWidth) cal.classList.add('dp-right');
+      else cal.classList.remove('dp-right');
+      open = true;
+    }
+
+    function closeCal() {
+      cal.style.display = 'none';
+      open = false;
+    }
+
+    function pick(y, m, d) {
+      native.value = toIso(y, m, d);
+      disp.value = toDisplay(native.value);
+      closeCal();
+      native.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+
+    function render() {
+      const sel = parseIso(native.value);
+      const today = new Date();
+      const first = new Date(curY, curM - 1, 1);
+      let dow = (first.getDay() + 6) % 7; // Mon=0
+      const dim = new Date(curY, curM, 0).getDate();
+
+      let cells = DAYS.map(d => `<div class="dp-dow">${d}</div>`).join('');
+      for (let i = 0; i < dow; i++) cells += '<div></div>';
+      for (let d = 1; d <= dim; d++) {
+        const isToday = today.getFullYear() === curY && today.getMonth() + 1 === curM && today.getDate() === d;
+        const isSel   = sel && sel.y === curY && sel.m === curM && sel.d === d;
+        cells += `<button type="button" class="dp-day${isToday?' dp-today':''}${isSel?' dp-sel':''}" data-d="${d}">${d}</button>`;
+      }
+
+      cal.innerHTML =
+        `<div class="dp-header">
+           <button type="button" class="dp-nav" data-dir="-1">&#8249;</button>
+           <span class="dp-month-year">${MONTHS[curM-1]} ${curY}</span>
+           <button type="button" class="dp-nav" data-dir="1">&#8250;</button>
+         </div>
+         <div class="dp-grid">${cells}</div>
+         <div class="dp-footer"><button type="button" class="dp-today-btn">Today</button></div>`;
+
+      cal.querySelector('[data-dir="-1"]').onclick = () => {
+        curM--; if (curM < 1) { curM = 12; curY--; } render();
+      };
+      cal.querySelector('[data-dir="1"]').onclick = () => {
+        curM++; if (curM > 12) { curM = 1; curY++; } render();
+      };
+      cal.querySelectorAll('.dp-day').forEach(btn => {
+        btn.onclick = () => pick(curY, curM, parseInt(btn.dataset.d));
+      });
+      cal.querySelector('.dp-today-btn').onclick = () => {
+        const t = new Date();
+        pick(t.getFullYear(), t.getMonth() + 1, t.getDate());
+      };
+    }
+
+    disp.addEventListener('click', () => { if (!open) openCal(); });
+    disp.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { closeCal(); e.stopPropagation(); }
+      if (e.key === 'Enter' && open) e.preventDefault();
+    });
+    disp.addEventListener('blur', () => {
+      const p = parseDisplay(disp.value);
+      if (p) { native.value = toIso(p.y, p.m, p.d); disp.value = toDisplay(native.value); }
+      else if (!disp.value.trim()) native.value = '';
+    });
+
+    document.addEventListener('click', e => {
+      if (open && !wrap.contains(e.target)) closeCal();
+    }, true);
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('input[type=date]').forEach(initDatepicker);
+  });
+})();
+</script>
 </body>
 </html>
