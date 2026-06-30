@@ -66,11 +66,17 @@ def _open_file(path):
     return open(path, 'rb')
 
 
-def import_file(path):
+def import_file(path, progress_cb=None):
     """
     Import a GnuCash XML file. Returns a dict with counts of
     created/skipped accounts and transactions.
+
+    progress_cb(phase, current, total) is called periodically when provided.
     """
+    def _cb(phase, current, total):
+        if progress_cb:
+            progress_cb(phase, current, total)
+
     with _open_file(path) as f:
         tree = ET.parse(f)
 
@@ -84,8 +90,10 @@ def import_file(path):
 
     # --- Pass 1: accounts (tree order, parents before children) ---
     guid_to_account = {}
+    act_els = book.findall('gnc:account', NS)
+    _cb('Importing accounts', 0, len(act_els))
 
-    for act_el in book.findall('gnc:account', NS):
+    for i, act_el in enumerate(act_els):
         act_guid = act_el.findtext('act:id', namespaces=NS)
         act_name = act_el.findtext('act:name', namespaces=NS) or ''
         act_type_raw = act_el.findtext('act:type', namespaces=NS) or 'ASSET'
@@ -129,9 +137,13 @@ def import_file(path):
             stats['accounts_created'] += 1
         else:
             stats['accounts_skipped'] += 1
+        _cb('Importing accounts', i + 1, len(act_els))
 
     # --- Pass 2: transactions ---
-    for trn_el in book.findall('gnc:transaction', NS):
+    trn_els = book.findall('gnc:transaction', NS)
+    _cb('Importing transactions', 0, len(trn_els))
+
+    for i, trn_el in enumerate(trn_els):
         trn_guid = trn_el.findtext('trn:id', namespaces=NS)
         trn_uuid = uuid.UUID(trn_guid) if trn_guid else uuid.uuid4()
 
@@ -157,6 +169,7 @@ def import_file(path):
             stats['transactions_skipped'] += 1
         else:
             stats['transactions_created'] += 1
+        _cb('Importing transactions', i + 1, len(trn_els))
 
         for split_el in trn_el.findall('trn:splits/trn:split', NS):
             split_guid = split_el.findtext('split:id', namespaces=NS)

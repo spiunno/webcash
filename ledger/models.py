@@ -1,4 +1,5 @@
 import uuid
+import json
 from decimal import Decimal
 from django.db import models
 from django.contrib.auth.models import User
@@ -248,3 +249,29 @@ def get_price(commodity_mnemonic, target_currency, on_date=None):
     if p and p.value_num:
         return Decimal('1') / p.value_num
     return None
+
+
+class ImportJob(models.Model):
+    PENDING = 'pending'
+    RUNNING = 'running'
+    DONE    = 'done'
+    ERROR   = 'error'
+    STATUS_CHOICES = [(PENDING, 'Pending'), (RUNNING, 'Running'), (DONE, 'Done'), (ERROR, 'Error')]
+
+    user       = models.ForeignKey(User, on_delete=models.CASCADE, related_name='import_jobs')
+    created_at = models.DateTimeField(auto_now_add=True)
+    status     = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
+    phase      = models.CharField(max_length=100, blank=True)
+    progress   = models.IntegerField(default=0)
+    total      = models.IntegerField(default=0)
+    result_json = models.TextField(blank=True)  # JSON stats on success
+    error_msg  = models.TextField(blank=True)
+
+    def set_result(self, stats):
+        self.result_json = json.dumps(stats)
+
+    def get_result(self):
+        return json.loads(self.result_json) if self.result_json else {}
+
+    class Meta:
+        ordering = ['-created_at']

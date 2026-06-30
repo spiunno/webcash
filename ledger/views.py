@@ -1,11 +1,17 @@
+import json
+import os
+import tempfile
+import threading
 from decimal import Decimal
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
+from django.db import connection
 from django.db.models import Sum
 from django.contrib import messages
+from django.http import JsonResponse
 
-from .models import Account, Transaction, Split, UserPreferences, Price, CURRENCIES, get_price
+from .models import Account, Transaction, Split, UserPreferences, Price, CURRENCIES, get_price, ImportJob
 from .gnucash_import import import_file
 
 
@@ -134,32 +140,79 @@ def account_register(request, account_id):
 # GnuCash import
 # ---------------------------------------------------------------------------
 
+def _run_import_job(job_id, tmp_path):
+    """Run the GnuCash import in a background thread."""
+    # Each thread needs its own DB connection
+    connection.close()
+
+    from .models import ImportJob  # avoid circular at module level
+
+    job = ImportJob.objects.get(pk=job_id)
+    job.status = ImportJob.RUNNING
+    job.save(update_fields=['status'])
+
+    def progress_cb(phase, current, total):
+        ImportJob.objects.filter(pk=job_id).update(
+            phase=phase, progress=current, total=total
+        )
+
+    try:
+        stats = import_file(tmp_path, progress_cb=progress_cb)
+        job = ImportJob.objects.get(pk=job_id)
+        job.status = ImportJob.DONE
+        job.set_result(stats)
+        job.phase = 'Done'
+        job.save(update_fields=['status', 'result_json', 'phase'])
+    except Exception as exc:
+        ImportJob.objects.filter(pk=job_id).update(
+            status=ImportJob.ERROR,
+            error_msg=str(exc),
+            phase='Error',
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        connection.close()
+
+
 @login_required
 def import_gnucash(request):
-    account_tree = _build_tree()
     if request.method == 'POST' and request.FILES.get('gnucash_file'):
         uploaded = request.FILES['gnucash_file']
-        import tempfile, os
         with tempfile.NamedTemporaryFile(delete=False, suffix='.gnucash') as tmp:
             for chunk in uploaded.chunks():
                 tmp.write(chunk)
             tmp_path = tmp.name
-        try:
-            stats = import_file(tmp_path)
-            messages.success(
-                request,
-                f"Import complete: {stats['accounts_created']} accounts, "
-                f"{stats['transactions_created']} transactions created; "
-                f"{stats['accounts_skipped']} accounts, "
-                f"{stats['transactions_skipped']} transactions already existed."
-            )
-        except Exception as exc:
-            messages.error(request, f'Import failed: {exc}')
-        finally:
-            os.unlink(tmp_path)
-        return redirect('dashboard')
 
+        job = ImportJob.objects.create(user=request.user)
+        thread = threading.Thread(target=_run_import_job, args=(job.pk, tmp_path), daemon=True)
+        thread.start()
+        return redirect('import_job_status', job_id=job.pk)
+
+    account_tree = _build_tree()
     return render(request, 'ledger/import.html', {'account_tree': account_tree})
+
+
+@login_required
+def import_job_status(request, job_id):
+    job = get_object_or_404(ImportJob, pk=job_id, user=request.user)
+    return render(request, 'ledger/import_progress.html', {'job': job})
+
+
+@login_required
+def import_job_progress(request, job_id):
+    job = get_object_or_404(ImportJob, pk=job_id, user=request.user)
+    data = {
+        'status':   job.status,
+        'phase':    job.phase,
+        'progress': job.progress,
+        'total':    job.total,
+        'result':   job.get_result() if job.status == ImportJob.DONE else None,
+        'error':    job.error_msg   if job.status == ImportJob.ERROR else None,
+    }
+    return JsonResponse(data)
 
 
 # ---------------------------------------------------------------------------

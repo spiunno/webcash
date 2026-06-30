@@ -1,0 +1,79 @@
+{% extends 'ledger/base.html' %}
+{% block title %}Importing GnuCash — WebCash{% endblock %}
+{% block breadcrumb %}
+  <a href="{% url 'dashboard' %}" style="color:inherit;text-decoration:none;">Dashboard</a>
+  &rsaquo; <a href="{% url 'import_gnucash' %}" style="color:inherit;text-decoration:none;">Import GnuCash file</a>
+  &rsaquo; Import progress
+{% endblock %}
+
+{% block content %}
+<div class="card" style="max-width:560px;" id="progress-card">
+  <div class="card-title">Importing GnuCash file…</div>
+
+  <p id="phase-label" style="font-size:.875rem;color:#7f8fa4;margin-bottom:12px;">Starting…</p>
+
+  <div style="background:#e5e9f0;border-radius:6px;height:18px;overflow:hidden;margin-bottom:10px;">
+    <div id="progress-bar"
+         style="height:100%;width:0%;background:var(--accent,#4a9238);border-radius:6px;
+                transition:width .3s ease;"></div>
+  </div>
+  <p id="progress-text" style="font-size:.8rem;color:#7f8fa4;margin-bottom:20px;">0 / 0</p>
+
+  <div id="result-area" style="display:none;"></div>
+  <div id="error-area"  style="display:none;color:#e05252;font-size:.875rem;"></div>
+
+  <a href="{% url 'dashboard' %}" id="done-btn" class="btn btn-primary" style="display:none;">
+    Go to Dashboard
+  </a>
+</div>
+
+<script>
+(function () {
+  var url = "{% url 'import_job_progress' job.id %}";
+  var done = false;
+
+  function poll() {
+    if (done) return;
+    fetch(url)
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        var phase = data.phase || 'Working…';
+        var pct   = data.total > 0 ? Math.round(data.progress / data.total * 100) : 0;
+
+        document.getElementById('phase-label').textContent   = phase;
+        document.getElementById('progress-bar').style.width  = pct + '%';
+        document.getElementById('progress-text').textContent =
+          data.progress + ' / ' + data.total;
+
+        if (data.status === 'done') {
+          done = true;
+          var r = data.result;
+          document.getElementById('progress-bar').style.width = '100%';
+          document.getElementById('phase-label').textContent  = 'Import complete';
+          document.getElementById('result-area').style.display = '';
+          document.getElementById('result-area').innerHTML =
+            '<p style="font-size:.875rem;color:#4a9238;margin-bottom:16px;">' +
+            '<strong>Success!</strong><br>' +
+            r.accounts_created     + ' accounts created, ' +
+            r.accounts_skipped     + ' skipped<br>' +
+            r.transactions_created + ' transactions created, ' +
+            r.transactions_skipped + ' skipped' +
+            '</p>';
+          document.getElementById('done-btn').style.display = '';
+        } else if (data.status === 'error') {
+          done = true;
+          document.getElementById('phase-label').textContent = 'Import failed';
+          document.getElementById('error-area').style.display = '';
+          document.getElementById('error-area').textContent   = data.error;
+          document.getElementById('done-btn').style.display   = '';
+        } else {
+          setTimeout(poll, 800);
+        }
+      })
+      .catch(function () { setTimeout(poll, 2000); });
+  }
+
+  poll();
+})();
+</script>
+{% endblock %}
