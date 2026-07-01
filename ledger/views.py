@@ -1176,10 +1176,19 @@ def _flow_report_data(request, mode):
     account_to_cat = {a.pk: get_category(a) for a in accounts}
     cat_accounts   = {account_to_cat[a.pk].pk: account_to_cat[a.pk] for a in accounts}
 
+    # Transactions with a leg in an Equity account are book-closing entries
+    # (year-end zeroing of income/expense into equity), not real flows.
+    closing_txn_ids = set(
+        Split.objects
+        .filter(account__account_type=Account.EQUITY)
+        .values_list('transaction_id', flat=True)
+    )
+
     # Prefetch splits for selected accounts
     splits_by_account = defaultdict(list)
     for s in (Split.objects
               .filter(account_id__in=[a.pk for a in accounts])
+              .exclude(transaction_id__in=closing_txn_ids)
               .select_related('transaction')
               .order_by('transaction__post_date')):
         amt = s.quantity_num if s.quantity_num is not None else s.value_num

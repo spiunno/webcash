@@ -214,11 +214,9 @@ ACCOUNTS.forEach(a => {
   childrenOf[key].push(a);
 });
 
-// Find effective root(s): skip single placeholder root
-let topNodes = (childrenOf['__root__'] || []);
-if (topNodes.length === 1 && topNodes[0].placeholder) {
-  topNodes = childrenOf[topNodes[0].id] || [];
-}
+// Find effective root(s): accounts whose parent is not present in this list
+const accountIdSet = new Set(ACCOUNTS.map(a => a.id));
+let topNodes = ACCOUNTS.filter(a => !accountIdSet.has(a.parent));
 topNodes = [...topNodes].sort((a,b) => a.name.localeCompare(b.name));
 
 function selectAllAccounts() {
