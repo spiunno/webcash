@@ -269,6 +269,7 @@ class ImportJob(models.Model):
     ]
 
     user       = models.ForeignKey(User, on_delete=models.CASCADE, related_name='import_jobs')
+    kind       = models.CharField(max_length=20, choices=KIND_CHOICES, default=GNUCASH)
     created_at = models.DateTimeField(auto_now_add=True)
     status     = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
     phase      = models.CharField(max_length=100, blank=True)

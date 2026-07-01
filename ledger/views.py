@@ -13,11 +13,8 @@ from django.http import JsonResponse
 
 from .models import Account, Transaction, Split, UserPreferences, Price, CURRENCIES, get_price, ImportJob, SystemSettings
 from .gnucash_import import import_file
-<<<<<<< Updated upstream
-=======
 from .fineco_import import import_file as import_fineco_file
 from .amex_import import import_file as import_amex_file
->>>>>>> Stashed changes
 
 
 # ---------------------------------------------------------------------------
@@ -156,14 +153,16 @@ def account_register(request, account_id):
         .prefetch_related('transaction__splits__account')
     )
     rows = _build_register_rows(account, splits, balance_before)
+    account_prefs = _make_account_prefs(account, request.user)
 
     return render(request, 'ledger/register.html', {
         'account': account,
         'rows': rows,
         'account_tree': account_tree,
-        'account_prefs': _make_account_prefs(account, request.user),
+        'account_prefs': account_prefs,
         'current_offset': offset,
         'has_more': offset > 0,
+        'reconcile_ending_balance': f'{account.balance():.{account_prefs.decimal_places}f}',
     })
 
 
@@ -279,6 +278,7 @@ def import_gnucash(request):
 @login_required
 def import_job_status(request, job_id):
     job = get_object_or_404(ImportJob, pk=job_id, user=request.user)
+<<<<<<< HEAD
 <<<<<<< Updated upstream
     return render(request, 'ledger/import_progress.html', {'job': job})
 =======
@@ -289,6 +289,10 @@ def import_job_status(request, job_id):
     template = templates_by_kind.get(job.kind, 'ledger/import_progress.html')
     return render(request, template, {'job': job})
 >>>>>>> Stashed changes
+=======
+    template = 'ledger/import_fineco_progress.html' if job.kind == ImportJob.FINECO else 'ledger/import_progress.html'
+    return render(request, template, {'job': job})
+>>>>>>> 5d2a8ff9391fa1c1f9facc32d52adb4db47c5f59
 
 
 @login_required
@@ -306,8 +310,11 @@ def import_job_progress(request, job_id):
 
 
 # ---------------------------------------------------------------------------
+<<<<<<< HEAD
 <<<<<<< Updated upstream
 =======
+=======
+>>>>>>> 5d2a8ff9391fa1c1f9facc32d52adb4db47c5f59
 # Fineco PDF import
 # ---------------------------------------------------------------------------
 
@@ -393,6 +400,7 @@ def import_fineco(request):
 
 
 # ---------------------------------------------------------------------------
+<<<<<<< HEAD
 # American Express PDF import
 # ---------------------------------------------------------------------------
 
@@ -472,6 +480,8 @@ def import_amex(request):
 
 # ---------------------------------------------------------------------------
 >>>>>>> Stashed changes
+=======
+>>>>>>> 5d2a8ff9391fa1c1f9facc32d52adb4db47c5f59
 # Transaction delete / duplicate
 # ---------------------------------------------------------------------------
 

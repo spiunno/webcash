@@ -59,13 +59,13 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
       <div style="display:flex;flex-direction:column;gap:12px;">
         <label style="font-size:.85rem;font-weight:600;">
           Statement Date
-          <input type="date" name="statement_date" required
+          <input type="date" name="statement_date" required value="{% now 'Y-m-d' %}"
                  style="display:block;margin-top:4px;width:100%;padding:6px 8px;
                         border:1px solid var(--border);border-radius:5px;font-size:.88rem;box-sizing:border-box;">
         </label>
         <label style="font-size:.85rem;font-weight:600;">
           Ending Balance
-          <input type="text" name="ending_balance" required placeholder="0.00"
+          <input type="text" name="ending_balance" required placeholder="0.00" value="{{ reconcile_ending_balance }}"
                  style="display:block;margin-top:4px;width:100%;padding:6px 8px;
                         border:1px solid var(--border);border-radius:5px;font-size:.88rem;box-sizing:border-box;">
         </label>
