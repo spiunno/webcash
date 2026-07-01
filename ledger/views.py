@@ -152,14 +152,16 @@ def account_register(request, account_id):
         .prefetch_related('transaction__splits__account')
     )
     rows = _build_register_rows(account, splits, balance_before)
+    account_prefs = _make_account_prefs(account, request.user)
 
     return render(request, 'ledger/register.html', {
         'account': account,
         'rows': rows,
         'account_tree': account_tree,
-        'account_prefs': _make_account_prefs(account, request.user),
+        'account_prefs': account_prefs,
         'current_offset': offset,
         'has_more': offset > 0,
+        'reconcile_ending_balance': f'{account.balance():.{account_prefs.decimal_places}f}',
     })
 
 
