@@ -25,6 +25,7 @@
       <div class="menu-dropdown">
         <div class="menu-label">Import / Export</div>
         <a href="{% url 'import_gnucash' %}">Import GnuCash file…</a>
+        <a href="{% url 'import_fineco' %}">Import Fineco statement (PDF)…</a>
         <div class="menu-sep"></div>
         <a href="{% url 'logout' %}">Sign out</a>
       </div>
@@ -254,11 +255,21 @@
     disp.autocomplete = 'off';
     disp.className = native.className;
     if (native.style.cssText) disp.style.cssText = native.style.cssText;
-    if (native.id) { disp.id = native.id; native.removeAttribute('id'); }
+    if (native.id) { disp.dataset.for = native.id; }
     if (native.required) { disp.required = true; native.required = false; }
     if (native.value) disp.value = toDisplay(native.value);
     native.type = 'hidden';
     wrap.insertBefore(disp, native);
+
+    // Override native.value so external writes (applyPreset, loadConfig) sync disp.
+    // Delegate to the real accessor (rather than shadowing with a plain variable) so
+    // native serialization — FormData, form submission — still sees the actual value.
+    const nativeValueDesc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(native), 'value');
+    Object.defineProperty(native, 'value', {
+      get() { return nativeValueDesc.get.call(native); },
+      set(v) { nativeValueDesc.set.call(native, v); disp.value = toDisplay(v); },
+      configurable: true,
+    });
 
     // Calendar popup (positioned inside wrap)
     const cal = document.createElement('div');
@@ -311,13 +322,17 @@
 
       cal.innerHTML =
         `<div class="dp-header">
+           <button type="button" class="dp-nav dp-nav-yr" data-yr="-1" title="Previous year">&#171;</button>
            <button type="button" class="dp-nav" data-dir="-1">&#8249;</button>
            <span class="dp-month-year">${MONTHS[curM-1]} ${curY}</span>
            <button type="button" class="dp-nav" data-dir="1">&#8250;</button>
+           <button type="button" class="dp-nav dp-nav-yr" data-yr="1" title="Next year">&#187;</button>
          </div>
          <div class="dp-grid">${cells}</div>
          <div class="dp-footer"><button type="button" class="dp-today-btn">Today</button></div>`;
 
+      cal.querySelector('[data-yr="-1"]').onclick = () => { curY--; render(); };
+      cal.querySelector('[data-yr="1"]').onclick  = () => { curY++; render(); };
       cal.querySelector('[data-dir="-1"]').onclick = () => {
         curM--; if (curM < 1) { curM = 12; curY--; } render();
       };
@@ -349,9 +364,10 @@
     }, true);
   }
 
-  document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('input[type=date]').forEach(initDatepicker);
-  });
+  window.initDatepickers = root =>
+    root.querySelectorAll('input[type=date]').forEach(initDatepicker);
+
+  document.addEventListener('DOMContentLoaded', () => initDatepickers(document));
 })();
 </script>
 </body>

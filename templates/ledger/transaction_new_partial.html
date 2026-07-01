@@ -19,11 +19,9 @@
   <div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-end;">
     <div class="form-group" style="margin:0;flex:0 0 150px;position:relative;">
       <label style="font-size:.73rem;">Date</label>
-      <input type="text" id="new-date-display" placeholder="DD/MM or YYYY-MM-DD"
-             value="{{ default_date }}"
+      <input type="date" name="post_date" id="new-date-iso" value="{{ default_date }}" required
              style="padding:5px 8px;font-size:.84rem;width:100%;
                     border:1px solid var(--border);border-radius:4px;">
-      <input type="hidden" name="post_date" id="new-date-iso" value="{{ default_date }}">
     </div>
     <div class="form-group" style="margin:0;flex:1;position:relative;">
       <label style="font-size:.73rem;">Description</label>
@@ -253,31 +251,8 @@ function initAccountPicker(pickerEl, accounts, selectedId) {
   const acDrop = document.getElementById('new-ac-dropdown');
   const descIn = document.getElementById('new-description');
 
-  // ── Date parsing ──────────────────────────────────────────────────────
-  const displayIn = document.getElementById('new-date-display');
-  const isoIn     = document.getElementById('new-date-iso');
-
-  function parseDate(raw) {
-    // YYYY-MM-DD
-    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-    const year = new Date().getFullYear();
-    // DD/MM/YYYY or DD.MM.YYYY
-    let m = raw.match(/^(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{4})$/);
-    if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-    // DD/MM or DD.MM  → assume current year
-    m = raw.match(/^(\d{1,2})[\/\.](\d{1,2})$/);
-    if (m) return `${year}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-    return null;
-  }
-
-  displayIn.addEventListener('blur', () => {
-    const iso = parseDate(displayIn.value.trim());
-    if (iso) { isoIn.value = iso; displayIn.value = iso; }
-    else displayIn.style.borderColor = 'var(--danger)';
-  });
-  displayIn.addEventListener('focus', () => { displayIn.style.borderColor = ''; });
-  // Initialise display
-  displayIn.value = isoIn.value;
+  // ── Date ──────────────────────────────────────────────────────────────
+  const isoIn = document.getElementById('new-date-iso');
 
   // ── Exchange rate (cross-currency) ───────────────────────────────────
   const acctMap = {};
@@ -537,16 +512,13 @@ function initAccountPicker(pickerEl, accounts, selectedId) {
   // ── Cancel ────────────────────────────────────────────────────────────
   document.getElementById('new-cancel').addEventListener('click', () => {
     document.getElementById('new-txn-panel').style.display = 'none';
-    document.getElementById('new-txn-btn').style.display = '';
+    document.querySelectorAll('.new-txn-trigger-btn').forEach(b => b.style.display = '');
   });
 
   // ── Submit ────────────────────────────────────────────────────────────
   form.addEventListener('submit', async e => {
     e.preventDefault();
-    // Ensure date is parsed
-    const iso = parseDate(displayIn.value.trim());
-    if (!iso) { displayIn.style.borderColor = 'var(--danger)'; displayIn.focus(); return; }
-    isoIn.value = iso;
+    if (!isoIn.value) return;
 
     // In multi mode merge debit/credit → single value field
     if (multiActive) {

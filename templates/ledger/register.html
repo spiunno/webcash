@@ -734,6 +734,7 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
     newPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     const res = await fetch(btn.dataset.url);
     newPanel.innerHTML = await res.text();
+    window.initDatepickers?.(newPanel);
     newPanel.querySelectorAll('script:not([type]), script[type="text/javascript"]').forEach(s => {
       const live = document.createElement('script');
       live.textContent = s.textContent;
@@ -752,6 +753,7 @@ window.CURRENT_TAB = {id:'account-{{ account.id }}', label:'{{ account.name|esca
     inner.innerHTML = '<div style="padding:16px;color:var(--text-muted);font-size:.85rem;">Loading…</div>';
     const res = await fetch(detailRow.dataset.editUrl);
     inner.innerHTML = await res.text();
+    window.initDatepickers?.(inner);
     attachInlineForm(inner, detailRow);
   });
 

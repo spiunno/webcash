@@ -159,7 +159,7 @@ try:
 except ImportError:
     pass
 
-SECRET_KEY = os.environ['SECRET_KEY']
-DEBUG = os.getenv('DEBUG', 'False') == 'True'
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split(',')
+SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-5j0agtnl9p8)()dv+or*6dubj0r9x_yi+5*g9!$og=iyp2$ipn')
+DEBUG = os.getenv('DEBUG', 'True') == 'True'
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 STATIC_ROOT = BASE_DIR / 'staticfiles'
