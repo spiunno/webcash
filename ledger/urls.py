@@ -7,6 +7,7 @@ urlpatterns = [
     path('logout/', views.logout_view, name='logout'),
     path('account/<int:account_id>/', views.account_register, name='account_register'),
     path('import/', views.import_gnucash, name='import_gnucash'),
+    path('import/fineco/', views.import_fineco, name='import_fineco'),
     path('import/<int:job_id>/', views.import_job_status, name='import_job_status'),
     path('import/<int:job_id>/progress/', views.import_job_progress, name='import_job_progress'),
     path('preferences/', views.preferences, name='preferences'),
