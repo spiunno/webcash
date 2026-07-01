@@ -259,6 +259,15 @@ class ImportJob(models.Model):
     ERROR   = 'error'
     STATUS_CHOICES = [(PENDING, 'Pending'), (RUNNING, 'Running'), (DONE, 'Done'), (ERROR, 'Error')]
 
+    GNUCASH = 'gnucash'
+    FINECO  = 'fineco'
+    AMEX    = 'amex'
+    KIND_CHOICES = [
+        (GNUCASH, 'GnuCash file'),
+        (FINECO, 'Fineco statement (PDF)'),
+        (AMEX, 'American Express statement (PDF)'),
+    ]
+
     user       = models.ForeignKey(User, on_delete=models.CASCADE, related_name='import_jobs')
     created_at = models.DateTimeField(auto_now_add=True)
     status     = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)

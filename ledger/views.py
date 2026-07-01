@@ -13,6 +13,11 @@ from django.http import JsonResponse
 
 from .models import Account, Transaction, Split, UserPreferences, Price, CURRENCIES, get_price, ImportJob, SystemSettings
 from .gnucash_import import import_file
+<<<<<<< Updated upstream
+=======
+from .fineco_import import import_file as import_fineco_file
+from .amex_import import import_file as import_amex_file
+>>>>>>> Stashed changes
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +279,16 @@ def import_gnucash(request):
 @login_required
 def import_job_status(request, job_id):
     job = get_object_or_404(ImportJob, pk=job_id, user=request.user)
+<<<<<<< Updated upstream
     return render(request, 'ledger/import_progress.html', {'job': job})
+=======
+    templates_by_kind = {
+        ImportJob.FINECO: 'ledger/import_fineco_progress.html',
+        ImportJob.AMEX: 'ledger/import_amex_progress.html',
+    }
+    template = templates_by_kind.get(job.kind, 'ledger/import_progress.html')
+    return render(request, template, {'job': job})
+>>>>>>> Stashed changes
 
 
 @login_required
@@ -292,6 +306,172 @@ def import_job_progress(request, job_id):
 
 
 # ---------------------------------------------------------------------------
+<<<<<<< Updated upstream
+=======
+# Fineco PDF import
+# ---------------------------------------------------------------------------
+
+def _run_fineco_import_job(job_id, tmp_path, account_id, card_account_id):
+    """Run the Fineco PDF import in a background thread."""
+    # Each thread needs its own DB connection
+    connection.close()
+
+    from .models import Account, ImportJob  # avoid circular at module level
+
+    job = ImportJob.objects.get(pk=job_id)
+    job.status = ImportJob.RUNNING
+    job.save(update_fields=['status'])
+
+    def progress_cb(phase, current, total):
+        ImportJob.objects.filter(pk=job_id).update(
+            phase=phase, progress=current, total=total
+        )
+
+    try:
+        account = Account.objects.get(pk=account_id)
+        card_account = Account.objects.get(pk=card_account_id)
+        stats = import_fineco_file(tmp_path, account, card_account=card_account, progress_cb=progress_cb)
+        job = ImportJob.objects.get(pk=job_id)
+        job.status = ImportJob.DONE
+        job.set_result(stats)
+        job.phase = 'Done'
+        job.save(update_fields=['status', 'result_json', 'phase'])
+    except Exception as exc:
+        ImportJob.objects.filter(pk=job_id).update(
+            status=ImportJob.ERROR,
+            error_msg=str(exc),
+            phase='Error',
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        connection.close()
+
+
+@login_required
+def import_fineco(request):
+    bank_accounts = Account.objects.filter(account_type=Account.BANK, hidden=False).order_by('name')
+    credit_accounts = Account.objects.filter(account_type=Account.CREDIT, hidden=False).order_by('name')
+    errors = []
+
+    if request.method == 'POST':
+        account_id = request.POST.get('account_id')
+        card_account_id = request.POST.get('card_account_id')
+        account = Account.objects.filter(pk=account_id, account_type=Account.BANK).first() if account_id else None
+        card_account = Account.objects.filter(pk=card_account_id, account_type=Account.CREDIT).first() if card_account_id else None
+        uploaded = request.FILES.get('fineco_file')
+
+        if account is None:
+            errors.append('Please choose a target bank account.')
+        if card_account is None:
+            errors.append('Please choose a target credit card account.')
+        if not uploaded:
+            errors.append('Please choose a PDF file.')
+
+        if not errors:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                for chunk in uploaded.chunks():
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+
+            job = ImportJob.objects.create(user=request.user, kind=ImportJob.FINECO)
+            thread = threading.Thread(
+                target=_run_fineco_import_job,
+                args=(job.pk, tmp_path, account.pk, card_account.pk),
+                daemon=True,
+            )
+            thread.start()
+            return redirect('import_job_status', job_id=job.pk)
+
+    return render(request, 'ledger/import_fineco.html', {
+        'bank_accounts': bank_accounts,
+        'credit_accounts': credit_accounts,
+        'errors': errors,
+    })
+
+
+# ---------------------------------------------------------------------------
+# American Express PDF import
+# ---------------------------------------------------------------------------
+
+def _run_amex_import_job(job_id, tmp_path, account_id):
+    """Run the American Express PDF import in a background thread."""
+    # Each thread needs its own DB connection
+    connection.close()
+
+    from .models import Account, ImportJob  # avoid circular at module level
+
+    job = ImportJob.objects.get(pk=job_id)
+    job.status = ImportJob.RUNNING
+    job.save(update_fields=['status'])
+
+    def progress_cb(phase, current, total):
+        ImportJob.objects.filter(pk=job_id).update(
+            phase=phase, progress=current, total=total
+        )
+
+    try:
+        account = Account.objects.get(pk=account_id)
+        stats = import_amex_file(tmp_path, account, progress_cb=progress_cb)
+        job = ImportJob.objects.get(pk=job_id)
+        job.status = ImportJob.DONE
+        job.set_result(stats)
+        job.phase = 'Done'
+        job.save(update_fields=['status', 'result_json', 'phase'])
+    except Exception as exc:
+        ImportJob.objects.filter(pk=job_id).update(
+            status=ImportJob.ERROR,
+            error_msg=str(exc),
+            phase='Error',
+        )
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        connection.close()
+
+
+@login_required
+def import_amex(request):
+    credit_accounts = Account.objects.filter(account_type=Account.CREDIT, hidden=False).order_by('name')
+    errors = []
+
+    if request.method == 'POST':
+        account_id = request.POST.get('account_id')
+        account = Account.objects.filter(pk=account_id, account_type=Account.CREDIT).first() if account_id else None
+        uploaded = request.FILES.get('amex_file')
+
+        if account is None:
+            errors.append('Please choose a target credit card account.')
+        if not uploaded:
+            errors.append('Please choose a PDF file.')
+
+        if not errors:
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                for chunk in uploaded.chunks():
+                    tmp.write(chunk)
+                tmp_path = tmp.name
+
+            job = ImportJob.objects.create(user=request.user, kind=ImportJob.AMEX)
+            thread = threading.Thread(
+                target=_run_amex_import_job,
+                args=(job.pk, tmp_path, account.pk),
+                daemon=True,
+            )
+            thread.start()
+            return redirect('import_job_status', job_id=job.pk)
+
+    return render(request, 'ledger/import_amex.html', {
+        'credit_accounts': credit_accounts,
+        'errors': errors,
+    })
+
+
+# ---------------------------------------------------------------------------
+>>>>>>> Stashed changes
 # Transaction delete / duplicate
 # ---------------------------------------------------------------------------
 
