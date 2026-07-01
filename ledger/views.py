@@ -278,21 +278,13 @@ def import_gnucash(request):
 @login_required
 def import_job_status(request, job_id):
     job = get_object_or_404(ImportJob, pk=job_id, user=request.user)
-<<<<<<< HEAD
-<<<<<<< Updated upstream
     return render(request, 'ledger/import_progress.html', {'job': job})
-=======
     templates_by_kind = {
         ImportJob.FINECO: 'ledger/import_fineco_progress.html',
         ImportJob.AMEX: 'ledger/import_amex_progress.html',
     }
     template = templates_by_kind.get(job.kind, 'ledger/import_progress.html')
     return render(request, template, {'job': job})
->>>>>>> Stashed changes
-=======
-    template = 'ledger/import_fineco_progress.html' if job.kind == ImportJob.FINECO else 'ledger/import_progress.html'
-    return render(request, template, {'job': job})
->>>>>>> 5d2a8ff9391fa1c1f9facc32d52adb4db47c5f59
 
 
 @login_required
@@ -310,11 +302,6 @@ def import_job_progress(request, job_id):
 
 
 # ---------------------------------------------------------------------------
-<<<<<<< HEAD
-<<<<<<< Updated upstream
-=======
-=======
->>>>>>> 5d2a8ff9391fa1c1f9facc32d52adb4db47c5f59
 # Fineco PDF import
 # ---------------------------------------------------------------------------
 
@@ -400,7 +387,6 @@ def import_fineco(request):
 
 
 # ---------------------------------------------------------------------------
-<<<<<<< HEAD
 # American Express PDF import
 # ---------------------------------------------------------------------------
 
@@ -479,9 +465,6 @@ def import_amex(request):
 
 
 # ---------------------------------------------------------------------------
->>>>>>> Stashed changes
-=======
->>>>>>> 5d2a8ff9391fa1c1f9facc32d52adb4db47c5f59
 # Transaction delete / duplicate
 # ---------------------------------------------------------------------------
 
